@@ -119,14 +119,65 @@ analysis/                 salida completa sin editar de las herramientas de aná
 
 ## 5. El mapa
 
-PENDIENTE (Fase 1):
+### Imagen y datos
 
-- Fuente de la imagen y procedimiento de exportación desde OpenStreetMap.
-- Bounding box: `north = ?`, `south = ?`, `west = ?`, `east = ?`.
-- Cómo se extrajeron intersecciones y segmentos (consulta Overpass o procedimiento manual), manejo de calles
-  curvas (nodos intermedios de forma) y de calles de un solo sentido.
-- Tamaño del grafo: `? nodos`, `? segmentos`, `? restaurantes`, y cómo quedan repartidos entre los anillos.
-- Captura de la ventana con el grafo superpuesto a la imagen.
+Tanto la imagen (`data/equipetrol.png`, 965 × 1371 px) como los datos de calles (`data/equipetrol.osm`) se
+exportaron de [openstreetmap.org](https://www.openstreetmap.org) con **la misma caja geográfica**:
+
+| north | south | west | east |
+|-------|-------|------|------|
+| −17.7535 | −17.7765 | −63.2040 | −63.1870 |
+
+La caja (~1.8 km × 2.5 km) encierra Av. San Martín de punta a punta con ~200–300 m de margen. Con el norte
+arriba, una latitud/longitud se convierte a píxel con una proyección lineal sobre esos bounds (en 2.5 km el error
+frente a la proyección Mercator de OSM es menor que un píxel).
+
+### Dónde están los anillos
+
+En esta zona, OpenStreetMap rotula los anillos con nombres de avenida:
+
+| Anillo | Nombre en OSM | Dónde se ve |
+|--------|---------------|-------------|
+| Segundo Anillo | Avenida Cristóbal de Mendoza | Abajo a la derecha, donde termina Av. San Martín |
+| Tercer Anillo | Avenida Noel Kempff Mercado / Tercer Anillo Externo, con sus rotondas | La curva que cruza el centro de la imagen |
+| Cuarto Anillo | Avenida Antonio Vaca Díez | Arriba a la izquierda, donde empieza Av. San Martín |
+| — | Avenida San Martín (en su tramo norte corre junto a Av. Leigue Castedo) | Diagonal de noroeste a sureste |
+
+Av. San Martín une el Cuarto Anillo, en (−17.7571, −63.2011), con el Segundo, en (−17.7724, −63.1903), a ~3.5 km
+y ~1.5 km de la Plaza 24 de Septiembre respectivamente.
+
+### Red de calles
+
+`config/equipetrol.json` se genera con `tools/osm_extract.py` a partir de `data/equipetrol.osm`:
+
+```bash
+python3 tools/osm_extract.py data/equipetrol.osm config/equipetrol.json --all-streets --preview docs/graph_preview.png
+```
+
+| Elemento | Cantidad | Mínimo exigido |
+|----------|----------|----------------|
+| Intersecciones y nodos de forma | 668 | 25 |
+| Segmentos de calle | 1027 (259 de un solo sentido) | 40 |
+| Restaurantes | 6 | 6 |
+
+Decisiones del modelado:
+
+- **Calles incluidas:** avenidas (`trunk`, `primary`, `secondary`, `tertiary`), sus enlaces y retornos
+  (`*_link`) y todas las calles residenciales. Las pasarelas peatonales, los senderos y las vías de servicio
+  no se incluyen.
+- **Curvas:** entre dos cruces se conservan los puntos de forma necesarios (Douglas-Peucker, tolerancia 6 m),
+  para que ningún tramo atraviese una manzana. El script mide cuánto se aleja cada tramo de la calle real y
+  avisa si supera 20 m. Los pocos casos (≤ 27 m) son cruces de avenidas de doble calzada, donde el nodo queda
+  entre ambas calzadas.
+- **Sentidos:** las calles residenciales y los enlaces respetan el `oneway` de OSM. Las avenidas de doble calzada
+  (dos vías de un solo sentido en OSM) se modelan como calles de doble sentido.
+- **Conectividad:** se conserva la mayor componente fuertemente conexa: desde cualquier nodo se puede llegar a
+  cualquier otro respetando los sentidos.
+- **Restaurantes:** son restaurantes reales de OSM, elegidos de forma que queden lo más separados posible entre
+  sí: Burger King (entre el 3er y el 4to anillo), Puerto Milanesa, Fazenda y Pits Burguer (Tercer Anillo),
+  La Palette e I'Milenza (entre el 2do y el 3er anillo).
+
+![Grafo sobre el mapa](docs/graph_preview.png)
 
 ## 6. Decisiones de diseño
 
