@@ -1,0 +1,95 @@
+{
+  "map": {
+    "image": "../../data/equipetrol.png",
+    "attribution": "© OpenStreetMap contributors",
+    "bounds": {
+      "north": -17.7535,
+      "south": -17.7765,
+      "west": -63.204,
+      "east": -63.187
+    }
+  },
+  "nodes": [
+    {
+      "id": "a",
+      "lat": -17.7615739,
+      "lon": -63.193875
+    },
+    {
+      "id": "b",
+      "lat": -17.7601077,
+      "lon": -63.1947884
+    },
+    {
+      "id": "c",
+      "lat": -17.7597471,
+      "lon": -63.1941324
+    },
+    {
+      "id": "d",
+      "lat": -17.7609977,
+      "lon": -63.1929556
+    }
+  ],
+  "streets": [
+    {
+      "id": "s0",
+      "from": "b",
+      "to": "a",
+      "oneWay": true
+    },
+    {
+      "id": "s1",
+      "from": "c",
+      "to": "b",
+      "oneWay": false
+    },
+    {
+      "id": "s2",
+      "from": "c",
+      "to": "d",
+      "oneWay": false
+    },
+    {
+      "id": "s3",
+      "from": "a",
+      "to": "d",
+      "oneWay": false
+    }
+  ],
+  "restaurants": [
+    {
+      "id": "r0",
+      "name": "Prueba",
+      "node": "a",
+      "pickupSlots": 1,
+      "prepTimeMs": [
+        60000,
+        120000
+      ]
+    }
+  ],
+  "fleet": {
+    "couriers": 2,
+    "bagCapacity": 2,
+    "speedKmh": 30,
+    "startNode": "c"
+  },
+  "orders": {
+    "meanIntervalMs": 20000,
+    "burstMax": 3,
+    "maxPending": 10,
+    "seed": 7
+  },
+  "dispatch": {
+    "quoteTimeoutMs": 200,
+    "acceptTimeoutMs": 600000
+  },
+  "incidents": {
+    "breakdownProbability": 0.0
+  },
+  "simulation": {
+    "durationS": 600,
+    "timeScale": 60
+  }
+}
