@@ -1,0 +1,5 @@
+# Los scripts de shell SIEMPRE con LF, aunque se trabaje desde Windows.
+# Bash de Linux no tolera el \r de CRLF: lo interpreta como parte del comando y el
+# script falla con "$'\r': command not found". Pasa porque el repositorio se edita
+# desde Windows (core.autocrlf=true) pero los scripts se ejecutan en WSL.
+*.sh text eol=lf
