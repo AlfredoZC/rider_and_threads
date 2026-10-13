@@ -3,12 +3,17 @@
 
 namespace {
 
+// M_PI no es estandar de C++: es una extension de POSIX. glibc la define en
+// <cmath>, MinGW no sin _USE_MATH_DEFINES. El brief pide C++17 a secas, asi que
+// el valor va explicito y el codigo compila en cualquier entorno.
+constexpr double kPi = 3.14159265358979323846;
+
 // Distancia sobre la superficie de la Tierra entre dos puntos en grados (haversine).
 // Hace falta porque el config tiene latitud y longitud, no metros, y sin metros no hay
 // ni camino más corto ni estimación de tiempo.
 double haversineMeters(double lat1, double lon1, double lat2, double lon2) {
     const double kEarthRadiusM = 6371008.8;
-    const double toRad = M_PI / 180.0;
+    const double toRad = kPi / 180.0;
 
     const double dLat = (lat2 - lat1) * toRad;
     const double dLon = (lon2 - lon1) * toRad;

@@ -15,7 +15,7 @@ set -u
 cd "$(dirname "$0")/.." || exit 1          # siempre desde la raiz del proyecto,
                                            # para que "config/..." resuelva bien
 
-FLAGS="-std=c++17 -Wall -Wextra -g -Isrc -Ithird_party"
+FLAGS="-std=c++17 -Wall -Wextra -g -pthread -Isrc -Ithird_party"
 SRC=$(ls src/*.cpp | grep -v '^src/main\.cpp$')
 mkdir -p tests/bin
 
