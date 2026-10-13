@@ -18,3 +18,6 @@ Thumbs.db
 # Python (tools/)
 __pycache__/
 *.pyc
+
+# binarios de las pruebas (tests/run.sh)
+tests/bin/
