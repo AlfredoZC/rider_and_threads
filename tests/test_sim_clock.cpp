@@ -22,20 +22,29 @@ std::int64_t realElapsedMs(std::chrono::steady_clock::time_point from) {
 
 int main() {
     // --- conversiones: no dependen de ninguna medicion, son exactas
+    // realDuration devuelve MICROsegundos
     const SimClock fast(60.0);
-    assert(fast.realDuration(60000).count() == 1000);   // 60 s simulados = 1 s real
-    assert(fast.realDuration(600).count() == 10);
+    assert(fast.realDuration(60000).count() == 1000000);   // 60 s simulados = 1 s real
+    assert(fast.realDuration(600).count() == 10000);
     assert(fast.realDuration(0).count() == 0);
     assert(fast.timeScale() == 60.0);
 
     const SimClock same(1.0);
-    assert(same.realDuration(1500).count() == 1500);    // escala 1: son lo mismo
+    assert(same.realDuration(1500).count() == 1500000);    // escala 1: son lo mismo
 
-    const SimClock slow(0.5);                           // mas lento que el mundo real
-    assert(slow.realDuration(1000).count() == 2000);
+    const SimClock slow(0.5);                              // mas lento que el mundo real
+    assert(slow.realDuration(1000).count() == 2000000);
 
-    // redondeo, no truncamiento: 599/60 = 9.98 -> 10, no 9
-    assert(fast.realDuration(599).count() == 10);
+    // redondeo, no truncamiento: 599000 us / 60 = 9983.33 -> 9983
+    assert(fast.realDuration(599).count() == 9983);
+
+    // ninguna duracion simulada positiva puede dar cero: un wait_for de cero dentro de
+    // un bucle se convierte en un bucle que gira consumiendo CPU (§4).
+    for (std::int64_t simMs = 1; simMs <= 100; ++simMs) {
+        assert(fast.realDuration(simMs).count() > 0);
+    }
+    const SimClock veryFast(1000.0);
+    assert(veryFast.realDuration(1).count() > 0);          // 1 ms simulado = 1 us real
 
     // --- el reloj arranca cerca de cero
     const SimClock clock(60.0);
