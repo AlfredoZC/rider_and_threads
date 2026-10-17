@@ -1,0 +1,29 @@
+# ThreadSanitizer sobre CourierActor (un hilo por courier)
+
+Fecha: 2026-10-16T23:09:46-04:00
+Version: g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+
+Compilacion:
+  g++ -std=c++17 -Wall -Wextra -g -O1 -fno-omit-frame-pointer -fsanitize=thread -pthread \
+      -Isrc -Ithird_party -o tsan_courier_actor tests/test_courier_actor.cpp src/CourierActor.cpp
+
+Ejecucion:
+  setarch $(uname -m) -R ./tests/bin/tsan_courier_actor
+
+Carga: 8 hilos de courier esperando mientras el hilo principal llama snapshot() en
+todos, mas 300 ciclos de arrancar y parar un courier con temporizaciones distintas.
+
+  snapshot() devuelve el estado inicial correcto
+  8 couriers ociosos 400 ms consumieron 0.367 ms de CPU
+  snapshot() funciona mientras los hilos esperan
+  los 8 hilos terminaron en 3 ms
+  requestStop() antes de arrancar el hilo no lo deja colgado
+  300 ciclos arrancar/parar sin un solo cuelgue
+  courier actor ok
+exit=0
+
+RESULTADO: 0 reportes de ThreadSanitizer.
+
+El dato de CPU es la evidencia del requisito del §4 (descansar sin consumir CPU):
+8 hilos ociosos durante 400 ms gastaron menos de 1 ms de CPU. Si estuvieran girando
+en un bucle revisando una condicion, habrian gastado unos 3200 ms.
