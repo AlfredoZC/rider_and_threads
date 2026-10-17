@@ -20,6 +20,8 @@
 #include "Config.h"
 #include "CourierActor.h"
 #include "EventLog.h"
+#include "OrderBook.h"
+#include "OrderGenerator.h"
 #include "SimClock.h"
 
 namespace {
@@ -187,6 +189,12 @@ int main(int argc, char** argv) {
             static_cast<CourierId>(i) + 1, cfg.startNode, cfg.bagCapacity));
     }
 
+    // El libro de órdenes y el hilo que las crea. El libro se declara antes que el
+    // generador porque el generador lo referencia: así se destruye después, cuando ya
+    // no queda nadie que pueda usarlo.
+    OrderBook book(cfg.maxPending, clock, *log);
+    OrderGenerator generator(cfg, clock, book);
+
     // Los hilos se lanzan DESPUÉS de construir todos los actores: si se lanzaran dentro
     // del constructor, un hilo podría ver un objeto a medio construir.
     std::vector<std::thread> threads;
@@ -194,6 +202,7 @@ int main(int argc, char** argv) {
     for (auto& actor : fleet) {
         threads.emplace_back(&CourierActor::run, actor.get());
     }
+    std::thread generatorThread(&OrderGenerator::run, &generator);
 
     cv::namedWindow(windowName, cv::WINDOW_AUTOSIZE);
     cv::imshow(windowName, withGraph);
@@ -217,6 +226,11 @@ int main(int argc, char** argv) {
     Event stopping;
     stopping.name = EventName::kSimulationStopping;
     log->write(stopping);
+
+    // El generador para primero: no tiene sentido seguir creando órdenes mientras los
+    // repartidores se están yendo.
+    generator.requestStop();
+    generatorThread.join();
 
     // Primero se les pide a TODOS que paren, y recién después se los espera. Al revés
     // —pedir y esperar a cada uno antes de avisarle al siguiente— se serializa un cierre
