@@ -1,0 +1,133 @@
+# ThreadSanitizer sobre EventLog (primer monitor del proyecto)
+
+Fecha: 2026-10-16T22:25:19-04:00
+Version: g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+TSAN: gcc -fsanitize=thread
+
+Compilacion:
+  g++ -std=c++17 -Wall -Wextra -g -O1 -fno-omit-frame-pointer -fsanitize=thread -pthread \
+      -Isrc -Ithird_party -o tsan_event_log tests/test_event_log.cpp src/*.cpp (sin main.cpp)
+
+Ejecucion:
+  setarch $(uname -m) -R ./tests/bin/tsan_event_log
+  (el -R desactiva ASLR: sin eso el binario con TSAN segfaulta en esta maquina)
+
+Carga: 8 hilos escribiendo 500 eventos cada uno en el mismo EventLog = 4000 lineas.
+
+## 1. Codigo tal como esta en el repositorio
+
+  un evento por linea, solo con los campos que aplican
+  una ruta invalida lanza excepcion
+  4000 lineas de 8 hilos: todas JSON valido, ninguna perdida, t nunca retrocede
+  event log ok
+exit=0
+
+RESULTADO: 0 reportes de ThreadSanitizer.
+
+## 2. Control negativo: el mismo test con el lock_guard comentado
+
+Sirve para demostrar que la prueba detecta de verdad: si quitar el candado no
+produjera ningun reporte, el punto 1 no probaria nada.
+
+==================
+WARNING: ThreadSanitizer: data race (pid=1444)
+  Write of size 5 at 0x729000000000 by thread T2:
+    #0 memcpy ../../../../src/libsanitizer/sanitizer_common/sanitizer_common_interceptors_memintrinsics.inc:115 (libtsan.so.2+0x8bd30) (BuildId: 2a13a7710e361d06f7babbea53065ca2be93f738)
+    #1 memcpy ../../../../src/libsanitizer/sanitizer_common/sanitizer_common_interceptors_memintrinsics.inc:107 (libtsan.so.2+0x8bd30)
+    #2 std::basic_streambuf<char, std::char_traits<char> >::xsputn(char const*, long) <null> (libstdc++.so.6+0x166e5f) (BuildId: 753c6c8608b61d4e67be8f0c890e03e0aa046b8b)
+    #3 operator() tests/test_event_log.cpp:113 (nolock+0x511d) (BuildId: 759a50da42185a1ba09b8922f5d30dea2844dfa8)
+    #4 __invoke_impl<void, main()::<lambda()> > /usr/include/c++/13/bits/invoke.h:61 (nolock+0x511d)
+    #5 __invoke<main()::<lambda()> > /usr/include/c++/13/bits/invoke.h:96 (nolock+0x511d)
+    #6 _M_invoke<0> /usr/include/c++/13/bits/std_thread.h:292 (nolock+0x511d)
+    #7 operator() /usr/include/c++/13/bits/std_thread.h:299 (nolock+0x511d)
+    #8 _M_run /usr/include/c++/13/bits/std_thread.h:244 (nolock+0x511d)
+    #9 <null> <null> (libstdc++.so.6+0xecdb3) (BuildId: 753c6c8608b61d4e67be8f0c890e03e0aa046b8b)
+
+  Previous read of size 8 at 0x729000000000 by thread T1:
+    #0 write ../../../../src/libsanitizer/sanitizer_common/sanitizer_common_interceptors.inc:1091 (libtsan.so.2+0x5f3f9) (BuildId: 2a13a7710e361d06f7babbea53065ca2be93f738)
+    #1 std::__basic_file<char>::xsputn(char const*, long) <null> (libstdc++.so.6+0xf91ad) (BuildId: 753c6c8608b61d4e67be8f0c890e03e0aa046b8b)
+    #2 operator() tests/test_event_log.cpp:113 (nolock+0x511d) (BuildId: 759a50da42185a1ba09b8922f5d30dea2844dfa8)
+    #3 __invoke_impl<void, main()::<lambda()> > /usr/include/c++/13/bits/invoke.h:61 (nolock+0x511d)
+    #4 __invoke<main()::<lambda()> > /usr/include/c++/13/bits/invoke.h:96 (nolock+0x511d)
+    #5 _M_invoke<0> /usr/include/c++/13/bits/std_thread.h:292 (nolock+0x511d)
+    #6 operator() /usr/include/c++/13/bits/std_thread.h:299 (nolock+0x511d)
+    #7 _M_run /usr/include/c++/13/bits/std_thread.h:244 (nolock+0x511d)
+    #8 <null> <null> (libstdc++.so.6+0xecdb3) (BuildId: 753c6c8608b61d4e67be8f0c890e03e0aa046b8b)
+
+  Location is heap block of size 8192 at 0x729000000000 allocated by main thread:
+    #0 operator new[](unsigned long) ../../../../src/libsanitizer/tsan/tsan_new_delete.cpp:70 (libtsan.so.2+0xa70fe) (BuildId: 2a13a7710e361d06f7babbea53065ca2be93f738)
+    #1 std::basic_filebuf<char, std::char_traits<char> >::_M_allocate_internal_buffer() <null> (libstdc++.so.6+0x12abc3) (BuildId: 753c6c8608b61d4e67be8f0c890e03e0aa046b8b)
+    #2 main tests/test_event_log.cpp:100 (nolock+0x6378) (BuildId: 759a50da42185a1ba09b8922f5d30dea2844dfa8)
+
+  Thread T2 (tid=1447, running) created by main thread at:
+    #0 pthread_create ../../../../src/libsanitizer/tsan/tsan_interceptors_posix.cpp:1022 (libtsan.so.2+0x5ac1a) (BuildId: 2a13a7710e361d06f7babbea53065ca2be93f738)
+    #1 std::thread::_M_start_thread(std::unique_ptr<std::thread::_State, std::default_delete<std::thread::_State> >, void (*)()) <null> (libstdc++.so.6+0xeceb0) (BuildId: 753c6c8608b61d4e67be8f0c890e03e0aa046b8b)
+    #2 construct<std::thread, main()::<lambda()> > /usr/include/c++/13/bits/new_allocator.h:191 (nolock+0x656a) (BuildId: 759a50da42185a1ba09b8922f5d30dea2844dfa8)
+    #3 construct<std::thread, main()::<lambda()> > /usr/include/c++/13/bits/alloc_traits.h:538 (nolock+0x656a)
+    #4 _M_realloc_insert<main()::<lambda()> > /usr/include/c++/13/bits/vector.tcc:468 (nolock+0x656a)
+    #5 emplace_back<main()::<lambda()> > /usr/include/c++/13/bits/vector.tcc:123 (nolock+0x656a)
+    #6 main tests/test_event_log.cpp:104 (nolock+0x656a)
+
+  Thread T1 (tid=1446, running) created by main thread at:
+    #0 pthread_create ../../../../src/libsanitizer/tsan/tsan_interceptors_posix.cpp:1022 (libtsan.so.2+0x5ac1a) (BuildId: 2a13a7710e361d06f7babbea53065ca2be93f738)
+    #1 std::thread::_M_start_thread(std::unique_ptr<std::thread::_State, std::default_delete<std::thread::_State> >, void (*)()) <null> (libstdc++.so.6+0xeceb0) (BuildId: 753c6c8608b61d4e67be8f0c890e03e0aa046b8b)
+    #2 construct<std::thread, main()::<lambda()> > /usr/include/c++/13/bits/new_allocator.h:191 (nolock+0x656a) (BuildId: 759a50da42185a1ba09b8922f5d30dea2844dfa8)
+    #3 construct<std::thread, main()::<lambda()> > /usr/include/c++/13/bits/alloc_traits.h:538 (nolock+0x656a)
+    #4 _M_realloc_insert<main()::<lambda()> > /usr/include/c++/13/bits/vector.tcc:468 (nolock+0x656a)
+    #5 emplace_back<main()::<lambda()> > /usr/include/c++/13/bits/vector.tcc:123 (nolock+0x656a)
+    #6 main tests/test_event_log.cpp:104 (nolock+0x656a)
+
+SUMMARY: ThreadSanitizer: data race ../../../../src/libsanitizer/sanitizer_common/sanitizer_common_interceptors_memintrinsics.inc:115 in memcpy
+==================
+==================
+WARNING: ThreadSanitizer: data race (pid=1444)
+  Write of size 5 at 0x729000000008 by thread T3:
+    #0 memcpy ../../../../src/libsanitizer/sanitizer_common/sanitizer_common_interceptors_memintrinsics.inc:115 (libtsan.so.2+0x8bd30) (BuildId: 2a13a7710e361d06f7babbea53065ca2be93f738)
+    #1 memcpy ../../../../src/libsanitizer/sanitizer_common/sanitizer_common_interceptors_memintrinsics.inc:107 (libtsan.so.2+0x8bd30)
+    #2 std::basic_streambuf<char, std::char_traits<char> >::xsputn(char const*, long) <null> (libstdc++.so.6+0x166e5f) (BuildId: 753c6c8608b61d4e67be8f0c890e03e0aa046b8b)
+    #3 operator() tests/test_event_log.cpp:113 (nolock+0x511d) (BuildId: 759a50da42185a1ba09b8922f5d30dea2844dfa8)
+    #4 __invoke_impl<void, main()::<lambda()> > /usr/include/c++/13/bits/invoke.h:61 (nolock+0x511d)
+    #5 __invoke<main()::<lambda()> > /usr/include/c++/13/bits/invoke.h:96 (nolock+0x511d)
+    #6 _M_invoke<0> /usr/include/c++/13/bits/std_thread.h:292 (nolock+0x511d)
+    #7 operator() /usr/include/c++/13/bits/std_thread.h:299 (nolock+0x511d)
+    #8 _M_run /usr/include/c++/13/bits/std_thread.h:244 (nolock+0x511d)
+    #9 <null> <null> (libstdc++.so.6+0xecdb3) (BuildId: 753c6c8608b61d4e67be8f0c890e03e0aa046b8b)
+
+  Previous write of size 8 at 0x729000000008 by thread T1:
+    #0 memcpy ../../../../src/libsanitizer/sanitizer_common/sanitizer_common_interceptors_memintrinsics.inc:115 (libtsan.so.2+0x8bd30) (BuildId: 2a13a7710e361d06f7babbea53065ca2be93f738)
+    #1 memcpy ../../../../src/libsanitizer/sanitizer_common/sanitizer_common_interceptors_memintrinsics.inc:107 (libtsan.so.2+0x8bd30)
+    #2 std::basic_streambuf<char, std::char_traits<char> >::xsputn(char const*, long) <null> (libstdc++.so.6+0x166e5f) (BuildId: 753c6c8608b61d4e67be8f0c890e03e0aa046b8b)
+    #3 operator() tests/test_event_log.cpp:113 (nolock+0x511d) (BuildId: 759a50da42185a1ba09b8922f5d30dea2844dfa8)
+    #4 __invoke_impl<void, main()::<lambda()> > /usr/include/c++/13/bits/invoke.h:61 (nolock+0x511d)
+    #5 __invoke<main()::<lambda()> > /usr/include/c++/13/bits/invoke.h:96 (nolock+0x511d)
+    #6 _M_invoke<0> /usr/include/c++/13/bits/std_thread.h:292 (nolock+0x511d)
+    #7 operator() /usr/include/c++/13/bits/std_thread.h:299 (nolock+0x511d)
+    #8 _M_run /usr/include/c++/13/bits/std_thread.h:244 (nolock+0x511d)
+    #9 <null> <null> (libstdc++.so.6+0xecdb3) (BuildId: 753c6c8608b61d4e67be8f0c890e03e0aa046b8b)
+
+  Location is heap block of size 8192 at 0x729000000000 allocated by main thread:
+    #0 operator new[](unsigned long) ../../../../src/libsanitizer/tsan/tsan_new_delete.cpp:70 (libtsan.so.2+0xa70fe) (BuildId: 2a13a7710e361d06f7babbea53065ca2be93f738)
+    #1 std::basic_filebuf<char, std::char_traits<char> >::_M_allocate_internal_buffer() <null> (libstdc++.so.6+0x12abc3) (BuildId: 753c6c8608b61d4e67be8f0c890e03e0aa046b8b)
+    #2 main tests/test_event_log.cpp:100 (nolock+0x6378) (BuildId: 759a50da42185a1ba09b8922f5d30dea2844dfa8)
+
+  Thread T3 (tid=1448, running) created by main thread at:
+    #0 pthread_create ../../../../src/libsanitizer/tsan/tsan_interceptors_posix.cpp:1022 (libtsan.so.2+0x5ac1a) (BuildId: 2a13a7710e361d06f7babbea53065ca2be93f738)
+    #1 std::thread::_M_start_thread(std::unique_ptr<std::thread::_State, std::default_delete<std::thread::_State> >, void (*)()) <null> (libstdc++.so.6+0xeceb0) (BuildId: 753c6c8608b61d4e67be8f0c890e03e0aa046b8b)
+    #2 construct<std::thread, main()::<lambda()> > /usr/include/c++/13/bits/new_allocator.h:191 (nolock+0x656a) (BuildId: 759a50da42185a1ba09b8922f5d30dea2844dfa8)
+    #3 construct<std::thread, main()::<lambda()> > /usr/include/c++/13/bits/alloc_traits.h:538 (nolock+0x656a)
+    #4 _M_realloc_insert<main()::<lambda()> > /usr/include/c++/13/bits/vector.tcc:468 (nolock+0x656a)
+    #5 emplace_back<main()::<lambda()> > /usr/include/c++/13/bits/vector.tcc:123 (nolock+0x656a)
+    #6 main tests/test_event_log.cpp:104 (nolock+0x656a)
+
+  Thread T1 (tid=1446, running) created by main thread at:
+    #0 pthread_create ../../../../src/libsanitizer/tsan/tsan_interceptors_posix.cpp:1022 (libtsan.so.2+0x5ac1a) (BuildId: 2a13a7710e361d06f7babbea53065ca2be93f738)
+    #1 std::thread::_M_start_thread(std::unique_ptr<std::thread::_State, std::default_delete<std::thread::_State> >, void (*)()) <null> (libstdc++.so.6+0xeceb0) (BuildId: 753c6c8608b61d4e67be8f0c890e03e0aa046b8b)
+    #2 construct<std::thread, main()::<lambda()> > /usr/include/c++/13/bits/new_allocator.h:191 (nolock+0x656a) (BuildId: 759a50da42185a1ba09b8922f5d30dea2844dfa8)
+    #3 construct<std::thread, main()::<lambda()> > /usr/include/c++/13/bits/alloc_traits.h:538 (nolock+0x656a)
+    #4 _M_realloc_insert<main()::<lambda()> > /usr/include/c++/13/bits/vector.tcc:468 (nolock+0x656a)
+    #5 emplace_back<main()::<lambda()> > /usr/include/c++/13/bits/vector.tcc:123 (nolock+0x656a)
+    #6 main tests/test_event_log.cpp:104 (nolock+0x656a)
+
+SUMMARY: ThreadSanitizer: data race ../../../../src/libsanitizer/sanitizer_common/sanitizer_common_interceptors_memintrinsics.inc:115 in memcpy
+==================
+nolock: tests/test_event_log.cpp:120: int main(): Assertion `all.size() == static_cast<std::size_t>(kThreads * kPerThread)' failed.
