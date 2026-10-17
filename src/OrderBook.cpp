@@ -18,6 +18,24 @@ bool OrderBook::setState(Order& order, OrderState to) {
 bool OrderBook::admit(Order order) {
     const std::lock_guard<std::mutex> guard(mutex_);
 
+    // Un id repetido se rechaza antes de tocar nada.
+    //
+    // Sin esta guarda el defecto era silencioso: emplace() no hace nada si la clave ya
+    // existe —no falla ni avisa, devuelve .second == false y sigue—, pero el resto del
+    // metodo igual escribia el evento y hacia ++stats_.created. Quedaba una orden
+    // contada como creada que no estaba en el libro, el invariante
+    // created = delivered + rejected + pending dejaba de cerrar, y el sintoma aparecia
+    // recien en el resumen final (§6), a mil lineas de la causa.
+    //
+    // Hoy no puede ocurrir porque OrderFactory garantiza ids unicos, pero esa garantia
+    // vive en otro archivo: el libro la verifica donde la usa, igual que el
+    // assert(timeScale > 0) del SimClock. No se aborta el programa porque de esto se
+    // sale limpio: no se registra nada, no se cuenta nada y el llamador se entera por
+    // el false.
+    if (orders_.find(order.id) != orders_.end()) {
+        return false;
+    }
+
     Event event;
     event.order = order.id;
     event.restaurant = order.restaurantId;

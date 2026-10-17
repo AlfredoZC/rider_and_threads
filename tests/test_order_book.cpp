@@ -80,6 +80,31 @@ int main() {
         std::cout << "  una orden final no se puede rechazar de nuevo\n";
     }
 
+    // --- un id repetido se rechaza sin ensuciar los contadores
+    //
+    // emplace() no inserta si la clave ya existe, pero no falla ni avisa: sin la
+    // guarda de admit(), la orden quedaba contada como creada sin estar en el libro y
+    // el invariante dejaba de cerrar.
+    {
+        EventLog log("tests/bin/book_dup.log", clock);
+        OrderBook book(10, clock, log);
+        assert(book.admit(makeOrder(7)));
+        assert(!book.admit(makeOrder(7)));          // mismo id: no entra
+
+        const OrderStats s = book.stats();
+        assert(s.created == 1);                     // el duplicado NO se conto
+        assert(s.rejected == 0);                    // tampoco es un rechazo del §4
+        assert(s.pending == 1);
+        assert(s.created == s.delivered + s.rejected + s.pending);
+
+        // y la orden original quedo intacta
+        const auto original = book.find(7);
+        assert(original.has_value());
+        assert(original->state == OrderState::created);
+        assert(book.unassignedIds().size() == 1);
+        std::cout << "  un id repetido se rechaza sin romper los contadores\n";
+    }
+
     // --- LA prueba: 16 hilos admitiendo a la vez contra un limite de 50
     {
         EventLog log("tests/bin/book_burst.log", clock);

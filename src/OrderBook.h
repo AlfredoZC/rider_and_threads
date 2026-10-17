@@ -45,6 +45,9 @@ public:
     // queueFull y devuelve false; en los dos casos deja registrado el evento.
     // Verificar y agregar ocurren bajo el mismo candado, por eso devuelve un bool en
     // vez de obligar al llamador a consultar antes.
+    //
+    // Tambien devuelve false si el id ya existe, y ahi no registra ni cuenta nada:
+    // es una guarda contra un defecto silencioso, explicada en admit().
     bool admit(Order order);
 
     // Rechaza una orden viva (unreachable, noCourier). false si ya estaba en un
