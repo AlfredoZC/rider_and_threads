@@ -1,11 +1,16 @@
-// Fase 1: carga y valida la configuración y dibuja el grafo de calles sobre el mapa.
-// Todavía no hay hilos. Tecla G: mostrar/ocultar el grafo. ESC o cerrar la ventana: salir.
+// Carga y valida la configuración, dibuja el grafo de calles sobre el mapa y lanza un
+// hilo por courier. Los couriers todavía no reparten: esperan sin consumir CPU hasta que
+// el hilo principal les pide terminar. Tecla G: mostrar/ocultar el grafo. ESC o cerrar la
+// ventana: salir.
 //
 // Uso: delivery_sim <config.json> [--log <path>]
 #include <algorithm>
 #include <iostream>
+#include <memory>
 #include <string>
+#include <thread>
 #include <unordered_map>
+#include <vector>
 
 #include <opencv2/core.hpp>
 #include <opencv2/highgui.hpp>
@@ -13,6 +18,9 @@
 #include <opencv2/imgproc.hpp>
 
 #include "Config.h"
+#include "CourierActor.h"
+#include "EventLog.h"
+#include "SimClock.h"
 
 namespace {
 
@@ -123,6 +131,20 @@ int main(int argc, char** argv) {
 
     cv::setNumThreads(0);   // OpenCV solo para la ventana: sin hilos internos propios
 
+    // El reloj se crea antes que nada porque marca el instante cero de la simulación:
+    // todas las t del log se miden desde acá.
+    const SimClock clock(cfg.timeScale);
+
+    // El log se abre antes de lanzar ningún hilo. Si la ruta no sirve, es mejor
+    // enterarse ahora que con ocho hilos corriendo.
+    std::unique_ptr<EventLog> log;
+    try {
+        log = std::make_unique<EventLog>(args.logPath, clock);
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << '\n';
+        return 1;
+    }
+
     cv::Mat image = cv::imread(cfg.imagePath.string(), cv::IMREAD_COLOR);
     if (image.empty()) {
         std::cerr << "Error: no se pudo leer la imagen del mapa '" << cfg.imagePath.string() << "'\n";
@@ -154,6 +176,25 @@ int main(int argc, char** argv) {
     const int kFrameMs = 33;
     bool showGraph = true;
 
+    // La flota. unique_ptr y no vector<CourierActor> por dos razones: el actor tiene un
+    // mutex y una condition_variable adentro, así que no es copiable ni movible y el
+    // vector no podría reubicarlo al crecer; y otros hilos van a guardar punteros a
+    // estos objetos, cuya dirección no puede cambiar.
+    std::vector<std::unique_ptr<CourierActor>> fleet;
+    fleet.reserve(static_cast<std::size_t>(cfg.couriers));
+    for (int i = 0; i < cfg.couriers; ++i) {
+        fleet.push_back(std::make_unique<CourierActor>(
+            static_cast<CourierId>(i) + 1, cfg.startNode, cfg.bagCapacity));
+    }
+
+    // Los hilos se lanzan DESPUÉS de construir todos los actores: si se lanzaran dentro
+    // del constructor, un hilo podría ver un objeto a medio construir.
+    std::vector<std::thread> threads;
+    threads.reserve(fleet.size());
+    for (auto& actor : fleet) {
+        threads.emplace_back(&CourierActor::run, actor.get());
+    }
+
     cv::namedWindow(windowName, cv::WINDOW_AUTOSIZE);
     cv::imshow(windowName, withGraph);
     std::cout << "Simulation has started..." << std::endl;
@@ -170,6 +211,21 @@ int main(int argc, char** argv) {
         if (cv::getWindowProperty(windowName, cv::WND_PROP_VISIBLE) < 1) {
             break;
         }
+    }
+
+    // §7: registrar simulationStopping, terminar todos los hilos y no abandonar ninguno.
+    Event stopping;
+    stopping.name = EventName::kSimulationStopping;
+    log->write(stopping);
+
+    // Primero se les pide a TODOS que paren, y recién después se los espera. Al revés
+    // —pedir y esperar a cada uno antes de avisarle al siguiente— se serializa un cierre
+    // que puede ser simultáneo, y el §7 da sólo 5 segundos para todo.
+    for (auto& actor : fleet) {
+        actor->requestStop();
+    }
+    for (std::thread& thread : threads) {
+        thread.join();
     }
 
     cv::destroyAllWindows();
