@@ -108,7 +108,12 @@ private:
     std::condition_variable work_;   // avisa que entro una orden sin asignar
     bool stopWaiting_ = false;       // protegido por mutex_
     std::unordered_map<OrderId, Order> orders_;   // protegido por mutex_
-    std::size_t pending_ = 0;                     // protegido por mutex_
+    std::size_t pending_ = 0;        // vivas en este instante
+    // Las que markRemainingAsPending() dejo en estado pending. Se cuentan aparte
+    // porque pending es un estado FINAL: al marcarlas, pending_ baja a cero, y sin
+    // este contador el resumen reportaria siempre cero pendientes y el invariante
+    // created = delivered + rejected + pending no cerraria.
+    std::int64_t markedPending_ = 0;                     // protegido por mutex_
     OrderStats stats_;                            // protegido por mutex_
     std::int64_t deliverySumMs_ = 0;              // protegido por mutex_
 };
