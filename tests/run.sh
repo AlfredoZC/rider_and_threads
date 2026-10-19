@@ -57,5 +57,12 @@ for f in $FILES; do
 done
 
 echo
-[ $fail -eq 0 ] && echo "TODAS LAS PRUEBAS PASARON" || echo "HUBO PRUEBAS FALLIDAS"
+if [ $fail -eq 0 ]; then
+    echo "TODAS LAS PRUEBAS PASARON"
+else
+    # El resumen va tambien a stderr: asi "run.sh | tail -n" no lo esconde cuando
+    # la salida es larga, que es como se nos paso una prueba rota durante dos PRs.
+    echo "HUBO PRUEBAS FALLIDAS" >&2
+    echo "HUBO PRUEBAS FALLIDAS"
+fi
 exit $fail

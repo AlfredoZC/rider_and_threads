@@ -9,6 +9,8 @@
 // esta prueba no termina, ese es el sintoma.
 #include "CourierActor.h"
 
+#include "Config.h"
+
 #include <cassert>
 #include <chrono>
 #include <ctime>
@@ -32,9 +34,19 @@ double cpuMs() {
 }  // namespace
 
 int main() {
+    // El actor necesita el contexto compartido para trabajar. Estas pruebas son sobre el
+    // ciclo de vida del hilo, asi que nunca le llega una orden: el contexto esta para que
+    // el objeto se pueda construir.
+    const Config cfg = loadConfig("config/equipetrol.json");
+    const CityGraph graph(cfg);
+    const SimClock clock(60.0);
+    EventLog log("tests/bin/courier_actor.log", clock);
+    OrderBook book(cfg.maxPending, clock, log);
+    const SimContext ctx{graph, clock, log, book};
+
     // --- estado inicial coherente, visto desde afuera
     {
-        CourierActor actor(1, "n311", 3);
+        CourierActor actor(1, cfg.startNode, 3, ctx);
         const Courier view = actor.snapshot();
         assert(actor.id() == 1);
         assert(view.id == 1);
@@ -51,7 +63,7 @@ int main() {
         std::vector<std::unique_ptr<CourierActor>> fleet;
         for (int i = 0; i < kCouriers; ++i) {
             fleet.push_back(std::make_unique<CourierActor>(
-                static_cast<CourierId>(i) + 1, "n311", 3));
+                static_cast<CourierId>(i) + 1, cfg.startNode, 3, ctx));
         }
 
         std::vector<std::thread> threads;
@@ -86,7 +98,7 @@ int main() {
     // --- requestStop() antes de que el hilo arranque: el hilo no debe quedar colgado.
     // Es el caso del aviso perdido visto al reves, y lo cubre el predicado de wait().
     {
-        CourierActor actor(1, "n311", 3);
+        CourierActor actor(1, cfg.startNode, 3, ctx);
         actor.requestStop();                       // la bandera ya esta en true
         std::thread t(&CourierActor::run, &actor);
         t.join();                                  // si colgara, la prueba no termina
@@ -98,7 +110,7 @@ int main() {
     {
         const int kRounds = 300;
         for (int i = 0; i < kRounds; ++i) {
-            CourierActor actor(1, "n311", 3);
+            CourierActor actor(1, cfg.startNode, 3, ctx);
             std::thread t(&CourierActor::run, &actor);
             if (i % 3 == 0) {
                 std::this_thread::yield();         // deja que el hilo llegue al wait
