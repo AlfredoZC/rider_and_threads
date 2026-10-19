@@ -23,6 +23,8 @@
 #include "OrderBook.h"
 #include "OrderGenerator.h"
 #include "SimClock.h"
+#include "CityGraph.h"
+#include "SimContext.h"
 
 namespace {
 
@@ -178,6 +180,17 @@ int main(int argc, char** argv) {
     const int kFrameMs = 33;
     bool showGraph = true;
 
+    // El grafo se construye una vez, antes de cualquier hilo, y después es inmutable:
+    // por eso lo comparten todos los couriers sin ningún candado.
+    const CityGraph graph(cfg);
+
+    // El libro y el generador se declaran ANTES que la flota porque los couriers los
+    // referencian. En C++ los objetos se destruyen en orden inverso al de creación, así
+    // que el libro sobrevive a quienes lo usan.
+    OrderBook book(cfg.maxPending, clock, *log);
+    OrderGenerator generator(cfg, clock, book);
+    const SimContext ctx{graph, clock, *log, book};
+
     // La flota. unique_ptr y no vector<CourierActor> por dos razones: el actor tiene un
     // mutex y una condition_variable adentro, así que no es copiable ni movible y el
     // vector no podría reubicarlo al crecer; y otros hilos van a guardar punteros a
@@ -186,14 +199,8 @@ int main(int argc, char** argv) {
     fleet.reserve(static_cast<std::size_t>(cfg.couriers));
     for (int i = 0; i < cfg.couriers; ++i) {
         fleet.push_back(std::make_unique<CourierActor>(
-            static_cast<CourierId>(i) + 1, cfg.startNode, cfg.bagCapacity));
+            static_cast<CourierId>(i) + 1, cfg.startNode, cfg.bagCapacity, ctx));
     }
-
-    // El libro de órdenes y el hilo que las crea. El libro se declara antes que el
-    // generador porque el generador lo referencia: así se destruye después, cuando ya
-    // no queda nadie que pueda usarlo.
-    OrderBook book(cfg.maxPending, clock, *log);
-    OrderGenerator generator(cfg, clock, book);
 
     // Los hilos se lanzan DESPUÉS de construir todos los actores: si se lanzaran dentro
     // del constructor, un hilo podría ver un objeto a medio construir.

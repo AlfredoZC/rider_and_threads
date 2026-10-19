@@ -1,5 +1,7 @@
 #include "OrderBook.h"
 
+#include <algorithm>
+
 OrderBook::OrderBook(int maxPending, const SimClock& clock, EventLog& log)
     : maxPending_(static_cast<std::size_t>(maxPending)), clock_(clock), log_(log) {}
 
@@ -84,6 +86,78 @@ bool OrderBook::reject(OrderId id, RejectReason reason) {
     event.restaurant = it->second.restaurantId;
     event.reason = toString(reason);
     log_.write(event);
+    return true;
+}
+
+bool OrderBook::assign(OrderId id, CourierId courier) {
+    const std::lock_guard<std::mutex> guard(mutex_);
+    const auto it = orders_.find(id);
+    if (it == orders_.end()) {
+        return false;
+    }
+    // La orden pudo cambiar desde que el dispatcher la miro: pudo vencer su plazo o
+    // haberla tomado otro. Por eso se vuelve a validar ACA, dentro del candado. Un dato
+    // leido afuera del candado es una foto del pasado: sirve para decidir, no para
+    // suponer.
+    if (!setState(it->second, OrderState::assigned)) {
+        return false;
+    }
+    it->second.assignedCourier = courier;
+
+    Event event;
+    event.name = EventName::kOrderAssigned;
+    event.order = id;
+    event.courier = courier;
+    event.restaurant = it->second.restaurantId;
+    it->second.assignedMs = log_.write(event);
+    return true;
+}
+
+bool OrderBook::pickedUp(OrderId id, CourierId courier) {
+    const std::lock_guard<std::mutex> guard(mutex_);
+    const auto it = orders_.find(id);
+    // Solo el courier que la tiene asignada puede retirarla: sin este chequeo, el log
+    // podria decir que la retiro alguien que nunca la tuvo.
+    if (it == orders_.end() || it->second.assignedCourier != courier) {
+        return false;
+    }
+    if (!setState(it->second, OrderState::pickedUp)) {
+        return false;
+    }
+
+    Event event;
+    event.name = EventName::kOrderPickedUp;
+    event.order = id;
+    event.courier = courier;
+    event.restaurant = it->second.restaurantId;
+    it->second.pickedUpMs = log_.write(event);
+    return true;
+}
+
+bool OrderBook::delivered(OrderId id, CourierId courier) {
+    const std::lock_guard<std::mutex> guard(mutex_);
+    const auto it = orders_.find(id);
+    if (it == orders_.end() || it->second.assignedCourier != courier) {
+        return false;
+    }
+    if (!setState(it->second, OrderState::delivered)) {
+        return false;
+    }
+
+    Event event;
+    event.name = EventName::kOrderDelivered;
+    event.order = id;
+    event.courier = courier;
+    event.to = it->second.dropoffNode;
+    it->second.deliveredMs = log_.write(event);
+
+    // Los numeros del resumen (§6) se acumulan en el MISMO candado que el cambio de
+    // estado. Si se actualizaran por separado, habria un instante en que la orden esta
+    // entregada y el resumen todavia no la cuenta, y el §6 exige que coincidan siempre.
+    ++stats_.delivered;
+    const std::int64_t total = deliveryMs(it->second);
+    deliverySumMs_ += total;
+    stats_.maxDeliveryMs = std::max(stats_.maxDeliveryMs, total);
     return true;
 }
 

@@ -12,7 +12,8 @@ int main() {
     assert(c.state == CourierState::idle);
     assert(c.fromNode == "n311");
     assert(c.toNode == "n311");
-    assert(c.progress == 0.0);
+    assert(c.segmentStartMs == 0);
+    assert(c.segmentEndMs == 0);
     assert(c.delivered == 0);
     assert(c.bag.empty());
     assert(currentNode(c) == "n311");
@@ -38,13 +39,26 @@ int main() {
     assert(std::string(toString(CourierState::atRestaurant)) == "atRestaurant");
     assert(std::string(toString(CourierState::brokenDown)) == "brokenDown");
 
-    // interpolacion: a mitad de calle sigue contando el nodo del que salio
+    // posicion derivada del reloj: el courier no actualiza ningun avance
     c.fromNode = "n311";
     c.toNode = "n312";
-    c.progress = 0.5;
-    assert(currentNode(c) == "n311");
-    c.progress = 1.0;
+    c.segmentStartMs = 1000;
+    c.segmentEndMs = 3000;
+    assert(currentNode(c) == "n311");       // a mitad de tramo, el nodo del que salio
+    assert(positionRatio(c, 1000) == 0.0);
+    assert(positionRatio(c, 2000) == 0.5);
+    assert(positionRatio(c, 3000) == 1.0);
+    assert(positionRatio(c, 500) == 0.0);    // antes de salir: acotado
+    assert(positionRatio(c, 9999) == 1.0);   // tarde: acotado, no 4.5
+
+    // Al llegar, el actor deja fromNode == toNode y las dos marcas iguales: eso es
+    // lo que significa "quieto" y lo que hace que positionRatio devuelva 1.
+    c.fromNode = "n312";
+    c.toNode = "n312";
+    c.segmentStartMs = 3000;
+    c.segmentEndMs = 3000;
     assert(currentNode(c) == "n312");
+    assert(positionRatio(c, 0) == 1.0);      // tramo de duracion cero
 
     std::cout << "  courier ok\n";
 }
