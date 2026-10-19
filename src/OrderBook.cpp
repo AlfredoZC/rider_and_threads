@@ -63,33 +63,43 @@ bool OrderBook::admit(Order order) {
     Event event;
     event.order = order.id;
 
-    // Verificar y actuar, los dos adentro del mismo candado.
-    if (pending_ >= maxPending_) {
-        order.state = OrderState::rejected;
-        order.rejectReason = RejectReason::queueFull;
-        event.name = EventName::kOrderRejected;
-        event.reason = toString(RejectReason::queueFull);
-        order.createdMs = log_.write(event);
-        orders_.emplace(order.id, std::move(order));
-        ++stats_.created;
-        ++stats_.rejected;
-        return false;
-    }
-
+    // Toda orden que entra se registra como creada, incluida la que se va a rechazar
+    // enseguida por cola llena. El §6 exige que cada contador del resumen sea igual a
+    // la cantidad de lineas que coinciden en el log, y el resumen la cuenta en created
+    // porque la identidad created = delivered + rejected + pending lo obliga. Si el log
+    // no tuviera su orderCreated, el resumen diria 86 y el log 68.
+    //
+    // Y ademas cuenta la historia verdadera: la orden existio, se le asigno un id y un
+    // restaurante, y recien despues se rechazo.
     event.name = EventName::kOrderCreated;
-    // El §6 lista restaurant solo en orderCreated, pickupStarted y orderPickedUp:
-    // por eso no se pone antes de la bifurcacion, donde lo heredaria el rechazo.
+    // El §6 lista restaurant solo en orderCreated, pickupStarted y orderPickedUp.
     event.restaurant = order.restaurantId;
     // write() devuelve la t que uso: se guarda como createdMs para que el log y la
     // orden cuenten exactamente la misma historia, no dos que difieren en unos ms.
     order.createdMs = log_.write(event);
+    ++stats_.created;
+
+    // Verificar y actuar, los dos adentro del mismo candado.
+    if (pending_ >= maxPending_) {
+        order.state = OrderState::rejected;
+        order.rejectReason = RejectReason::queueFull;
+
+        Event rejected;
+        rejected.name = EventName::kOrderRejected;
+        rejected.order = order.id;
+        rejected.reason = toString(RejectReason::queueFull);
+        log_.write(rejected);
+
+        orders_.emplace(order.id, std::move(order));
+        ++stats_.rejected;
+        return false;
+    }
+
     order.state = OrderState::created;
     orders_.emplace(order.id, std::move(order));
     ++pending_;
-    ++stats_.created;
     admitted = true;
     return true;
-
 }
 
 bool OrderBook::reject(OrderId id, RejectReason reason) {
@@ -216,6 +226,7 @@ std::int64_t OrderBook::markRemainingAsPending() {
         // rechazadas no se tocan.
         if (setState(entry.second, OrderState::pending)) {
             ++marked;
+            ++markedPending_;
         }
     }
     return marked;
@@ -274,7 +285,10 @@ std::vector<OrderId> OrderBook::unassignedIds() const {
 OrderStats OrderBook::stats() const {
     const std::lock_guard<std::mutex> guard(mutex_);
     OrderStats copy = stats_;
-    copy.pending = static_cast<std::int64_t>(pending_);
+    // Durante la corrida son las vivas; despues de cerrar, las que quedaron en
+    // estado pending. Sumar ambas da el valor correcto en los dos momentos, porque
+    // al marcarlas una baja exactamente lo que la otra sube.
+    copy.pending = static_cast<std::int64_t>(pending_) + markedPending_;
     copy.avgDeliveryMs =
         stats_.delivered > 0 ? deliverySumMs_ / stats_.delivered : 0;
     return copy;

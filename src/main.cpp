@@ -27,6 +27,7 @@
 #include "OrderBook.h"
 #include "OrderGenerator.h"
 #include "SimClock.h"
+#include "Summary.h"
 #include "CityGraph.h"
 #include "SimContext.h"
 
@@ -252,7 +253,6 @@ int main(int argc, char** argv) {
 
     // durationS esta en segundos SIMULADOS. Con 0 corre hasta recibir una señal.
     const std::int64_t durationMs = cfg.durationS * 1000;
-    const auto realStart = std::chrono::steady_clock::now();
 
     while (true) {
         cv::imshow(windowName, showGraph ? withGraph : image);
@@ -304,18 +304,11 @@ int main(int argc, char** argv) {
     // Recien ahora, con todos los hilos terminados, se cuentan las que quedaron vivas.
     // Antes seria una carrera: un courier podria entregar una orden justo despues de que
     // la contaramos como pendiente.
-    const std::int64_t pending = book.markRemainingAsPending();
+    book.markRemainingAsPending();
     const OrderStats stats = book.stats();
 
-    const std::int64_t shutdownMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                        std::chrono::steady_clock::now() - realStart)
-                                        .count();
-
-    // Provisorio: el §6 pide un resumen en JSON con mas campos. Esta linea permite
-    // verificar desde ya que created = delivered + rejected + pending.
-    std::cout << "created=" << stats.created << " delivered=" << stats.delivered
-              << " rejected=" << stats.rejected << " pending=" << pending
-              << "  (corrida de " << shutdownMs / 1000 << " s reales)" << std::endl;
+    // §6: el resumen es la ULTIMA linea de stdout. Nada se imprime despues.
+    std::cout << buildSummary(stats, 0, fleet) << std::endl;
 
     cv::destroyAllWindows();
     return 0;
