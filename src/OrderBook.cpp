@@ -211,6 +211,20 @@ bool OrderBook::delivered(OrderId id, CourierId courier) {
     return true;
 }
 
+std::int64_t OrderBook::markRemainingAsPending() {
+    const std::lock_guard<std::mutex> guard(mutex_);
+    std::int64_t marked = 0;
+    for (auto& entry : orders_) {
+        // No hace falta preguntar si la orden esta viva: setState consulta
+        // canTransition, que prohibe salir de un estado final. Las ya entregadas o
+        // rechazadas no se tocan.
+        if (setState(entry.second, OrderState::pending)) {
+            ++marked;
+        }
+    }
+    return marked;
+}
+
 std::optional<Order> OrderBook::find(OrderId id) const {
     const std::lock_guard<std::mutex> guard(mutex_);
     const auto it = orders_.find(id);

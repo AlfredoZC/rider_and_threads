@@ -5,6 +5,9 @@
 //
 // Uso: delivery_sim <config.json> [--log <path>]
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <csignal>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -28,6 +31,29 @@
 #include "SimContext.h"
 
 namespace {
+
+// La bandera de parada por señal.
+//
+// Es global porque un manejador de señales no recibe parametros: el sistema operativo
+// lo llama sin contexto, asi que la unica via es una variable de alcance global.
+//
+// Y es atomic<bool> y no un bool comun por dos motivos. Uno: la señal puede llegar en
+// cualquier instante y en cualquier hilo, asi que escribir la bandera concurre con las
+// lecturas del bucle principal, y eso sin atomico es un data race. Dos: el estandar
+// solo permite tocar, dentro de un manejador, variables volatile sig_atomic_t o
+// atomicos SIN CANDADO. De ahi el static_assert.
+std::atomic<bool> g_stopSignal{false};
+static_assert(std::atomic<bool>::is_always_lock_free,
+              "el manejador de señales solo puede tocar atomicos sin candado");
+
+// Lo unico que hace es levantar la bandera.
+//
+// Un manejador interrumpe al hilo en el punto que sea, incluso teniendo tomado un
+// candado. Si aca se escribiera en el log se pediria el mutex del EventLog, y si el
+// hilo interrumpido ya lo tenia, el programa se bloquearia para siempre contra si
+// mismo, sin nadie que pueda soltarlo. Tampoco se puede imprimir ni pedir memoria.
+// Se llama seguridad frente a señales asincronas: levantar una bandera y nada mas.
+extern "C" void onStopSignal(int) { g_stopSignal.store(true); }
 
 struct Arguments {
     std::string configPath;
@@ -221,6 +247,13 @@ int main(int argc, char** argv) {
     cv::imshow(windowName, withGraph);
     std::cout << "Simulation has started..." << std::endl;
 
+    std::signal(SIGINT, onStopSignal);
+    std::signal(SIGTERM, onStopSignal);
+
+    // durationS esta en segundos SIMULADOS. Con 0 corre hasta recibir una señal.
+    const std::int64_t durationMs = cfg.durationS * 1000;
+    const auto realStart = std::chrono::steady_clock::now();
+
     while (true) {
         cv::imshow(windowName, showGraph ? withGraph : image);
         const int key = cv::waitKey(kFrameMs);
@@ -233,6 +266,14 @@ int main(int argc, char** argv) {
         if (cv::getWindowProperty(windowName, cv::WND_PROP_VISIBLE) < 1) {
             break;
         }
+        // Las dos condiciones de corte del §7. La señal se nota en un cuadro como
+        // mucho, o sea 33 ms: muy por debajo de los 5 segundos que da el enunciado.
+        if (g_stopSignal.load()) {
+            break;
+        }
+        if (durationMs > 0 && clock.nowMs() >= durationMs) {
+            break;
+        }
     }
 
     // §7: registrar simulationStopping, terminar todos los hilos y no abandonar ninguno.
@@ -240,25 +281,41 @@ int main(int argc, char** argv) {
     stopping.name = EventName::kSimulationStopping;
     log->write(stopping);
 
-    // El generador para primero: no tiene sentido seguir creando órdenes mientras los
-    // repartidores se están yendo.
+    // El orden va en cascada, de la fuente hacia el final:
+    //   1. el generador deja de crear ordenes,
+    //   2. el dispatcher deja de repartir las que quedan,
+    //   3. los couriers abandonan el viaje en curso.
+    // Al reves, cada etapa seguiria alimentando a la siguiente mientras esta se apaga.
     generator.requestStop();
     generatorThread.join();
 
-    // Despues el dispatcher: ya no entran ordenes nuevas, asi que no tiene sentido
-    // que siga repartiendo mientras los couriers se van.
     dispatcher.requestStop();
     dispatcherThread.join();
 
-    // Primero se les pide a TODOS que paren, y recién después se los espera. Al revés
-    // —pedir y esperar a cada uno antes de avisarle al siguiente— se serializa un cierre
-    // que puede ser simultáneo, y el §7 da sólo 5 segundos para todo.
+    // A TODOS primero y recien despues se los espera: pedir y esperar de a uno
+    // serializaria un cierre que puede ser simultaneo.
     for (auto& actor : fleet) {
         actor->requestStop();
     }
     for (std::thread& thread : threads) {
         thread.join();
     }
+
+    // Recien ahora, con todos los hilos terminados, se cuentan las que quedaron vivas.
+    // Antes seria una carrera: un courier podria entregar una orden justo despues de que
+    // la contaramos como pendiente.
+    const std::int64_t pending = book.markRemainingAsPending();
+    const OrderStats stats = book.stats();
+
+    const std::int64_t shutdownMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                        std::chrono::steady_clock::now() - realStart)
+                                        .count();
+
+    // Provisorio: el §6 pide un resumen en JSON con mas campos. Esta linea permite
+    // verificar desde ya que created = delivered + rejected + pending.
+    std::cout << "created=" << stats.created << " delivered=" << stats.delivered
+              << " rejected=" << stats.rejected << " pending=" << pending
+              << "  (corrida de " << shutdownMs / 1000 << " s reales)" << std::endl;
 
     cv::destroyAllWindows();
     return 0;

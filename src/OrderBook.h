@@ -79,6 +79,11 @@ public:
     // oferta rechazada no, porque nadie llego a hacerse cargo de nada.
     bool unassign(OrderId id, bool countAsReassigned);
 
+    // Marca como pending todas las ordenes que seguian vivas. Se llama UNA vez, al
+    // cerrar, y DESPUES de que todos los hilos terminaron: si quedara alguno corriendo
+    // podria mover una orden justo despues de contarla. Devuelve cuantas marco.
+    std::int64_t markRemainingAsPending();
+
     // Una copia del estado actual, o nullopt si el id no existe. Copia: quien la recibe
     // trabaja fuera del candado.
     std::optional<Order> find(OrderId id) const;
