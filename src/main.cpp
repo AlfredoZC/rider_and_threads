@@ -227,7 +227,14 @@ int main(int argc, char** argv) {
     fleet.reserve(static_cast<std::size_t>(cfg.couriers));
     for (int i = 0; i < cfg.couriers; ++i) {
         fleet.push_back(std::make_unique<CourierActor>(
-            static_cast<CourierId>(i) + 1, cfg.startNode, cfg.bagCapacity, ctx));
+            static_cast<CourierId>(i) + 1, cfg.startNode, cfg.bagCapacity, ctx,
+            cfg.breakdownProbability, cfg.seed));
+    }
+    // La flota se conecta recien ahora, con todos construidos: un courier necesita
+    // conocer a sus companeros para traspasarles sus ordenes al averiarse, y en el
+    // constructor la lista todavia se estaba llenando.
+    for (auto& actor : fleet) {
+        actor->setFleet(&fleet);
     }
 
     // Los hilos se lanzan DESPUÉS de construir todos los actores: si se lanzaran dentro
@@ -308,7 +315,7 @@ int main(int argc, char** argv) {
     const OrderStats stats = book.stats();
 
     // §6: el resumen es la ULTIMA linea de stdout. Nada se imprime despues.
-    std::cout << buildSummary(stats, 0, fleet) << std::endl;
+    std::cout << buildSummary(stats, stats.breakdowns, fleet) << std::endl;
 
     cv::destroyAllWindows();
     return 0;

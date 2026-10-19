@@ -263,7 +263,7 @@ comprobación ocurre dentro del candado del `OrderBook`, que dura microsegundos.
 | 3 | `Dispatcher` → tareas de cotización | `std::future` con plazo de `quoteTimeoutMs` reales | [plan] |
 | 4 | `Dispatcher` → `CourierActor` | `offer()` sobre el monitor del courier + `notify_one` | [plan] |
 | 5 | `CourierActor` ↔ `Restaurant` | monitor con cola FIFO y `pickupSlots` | [plan] |
-| 6 | Courier averiado → courier receptor | `std::scoped_lock` sobre los dos couriers | [plan] |
+| 6 | Courier averiado → courier receptor | `std::scoped_lock` sobre los dos couriers | [hecho] |
 | 7 | Todos → `EventLog` | monitor; una línea JSON completa por evento | [hecho] |
 | 8 | Renderer / dispatcher ← `CourierActor` | `snapshot()` devuelve una copia tomada bajo candado | [hecho] |
 | 9 | main → todos | `requestStop()` en cada monitor y `join()` de todos los hilos | [hecho] |
@@ -275,7 +275,7 @@ fijar un orden total y no violarlo nunca.
 
 | Nivel | Mutex | Puede tomar a continuación | Estado |
 |-------|-------|----------------------------|--------|
-| 1 | `CourierActor` (uno, o dos a la vez con `std::scoped_lock`) | `OrderBook`, `EventLog` | [hecho] |
+| 1 | `CourierActor` (uno, o **dos a la vez** con `std::scoped_lock`) | `OrderBook`, `EventLog` | [hecho] |
 | 2 | `OrderBook`, `Restaurant` | `EventLog` | [hecho] el libro |
 | 3 | `EventLog` | ninguno (hoja) | [hecho] |
 
@@ -284,6 +284,13 @@ Dos propiedades lo sostienen hoy:
 - **`EventLog::write()` no llama a nada que pueda tomar otro candado.** Es hoja por
   construcción, así que registrar un evento teniendo tomado el candado del `OrderBook` o el de
   un courier no puede bloquear a nadie.
+- **El traspaso por avería toma dos candados de courier a la vez, y por eso usa
+  `std::scoped_lock`.** Tomarlos uno por uno sería el interbloqueo de manual: si A se
+  avería y elige a B mientras B se avería y elige a A, cada uno tendría el suyo
+  esperando el del otro para siempre. `scoped_lock` los toma con un algoritmo que
+  evita ese ciclo sin importar el orden en que se le pasen, y es lo que hace que las
+  averías simultáneas no puedan bloquear el sistema (§4). *Verificado: 300 averías
+  simultáneas cruzadas entre dos couriers, sin un solo bloqueo.*
 - **`OrderGenerator` suelta su propio candado antes de llamar a `admit()`.** Nunca sostiene dos
   a la vez, de modo que no puede participar de un ciclo.
 

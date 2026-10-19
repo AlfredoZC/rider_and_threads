@@ -3,8 +3,15 @@
 #include <algorithm>
 
 CourierActor::CourierActor(CourierId id, const std::string& startNode, int bagCapacity,
-                           const SimContext& ctx)
-    : id_(id), ctx_(ctx), state_(id, startNode, bagCapacity) {}
+                           const SimContext& ctx, double breakdownProbability,
+                           std::uint32_t seed)
+    : id_(id),
+      ctx_(ctx),
+      breakdownProbability_(breakdownProbability),
+      // Semilla derivada del id con una constante de mezcla: cada courier tiene su
+      // propia corriente de azar y la corrida sigue siendo reproducible.
+      rng_(seed ^ (static_cast<std::uint32_t>(id) * 2654435761u)),
+      state_(id, startNode, bagCapacity) {}
 
 void CourierActor::run() {
     // La memoria de trabajo de Dijkstra es de ESTE hilo. Se crea una vez, aca, y se
@@ -26,7 +33,12 @@ void CourierActor::run() {
         // El reparto entero ocurre SIN el candado tomado. Dura segundos; sostenerlo
         // congelaria la ventana y bloquearia al dispatcher.
         lock.unlock();
-        deliver(router, orderId);
+        // La averia se sortea ANTES de salir a repartir. Si ocurre, el courier queda
+        // sin ordenes, y la vuelta siguiente lo encuentra esperando para siempre:
+        // esta fuera de servicio.
+        if (!maybeBreakDown()) {
+            deliver(router, orderId);
+        }
         lock.lock();
     }
 }
@@ -169,6 +181,89 @@ void CourierActor::finish(OrderId orderId, bool wasDelivered) {
     if (state_.bag.empty()) {
         state_.state = CourierState::idle;
     }
+}
+
+bool CourierActor::maybeBreakDown() {
+    if (breakdownProbability_ <= 0.0) {
+        return false;
+    }
+    // rng_ es de este hilo: ningun otro lo toca, asi que no necesita candado.
+    std::uniform_real_distribution<double> chance(0.0, 1.0);
+    if (chance(rng_) >= breakdownProbability_) {
+        return false;
+    }
+    return breakDownAndHandOver();
+}
+
+bool CourierActor::forceBreakdown() { return breakDownAndHandOver(); }
+
+bool CourierActor::breakDownAndHandOver() {
+    if (fleet_ == nullptr) {
+        return false;   // sin companeros no hay a quien traspasarle nada
+    }
+
+    // Se busca un receptor y se le intenta pasar TODO. Si ninguno puede con todas, la
+    // averia NO ocurre: eso es lo que significa todo-o-nada. Dejar la mitad con un
+    // courier averiado seria perder ordenes, y devolver las ya retiradas a la cola es
+    // imposible porque la comida ya esta en una bolsa.
+    std::vector<OrderId> moved;
+    CourierId receiver = kNoCourier;
+    for (const auto& candidate : *fleet_) {
+        if (candidate->id() == id_) {
+            continue;
+        }
+        moved = tryHandOverTo(*candidate);
+        if (!moved.empty()) {
+            receiver = candidate->id();
+            break;
+        }
+    }
+    if (receiver == kNoCourier) {
+        return false;
+    }
+
+    // El registro ocurre YA SOLTADOS los dos candados de courier. Son dos llamadas al
+    // libro, que toma el suyo y despues el del log: respeta la jerarquia
+    // courier -> libro -> log, pero no hay motivo para sostener los de courier mientras
+    // tanto.
+    ctx_.book.recordBreakdown(id_);
+    for (const OrderId orderId : moved) {
+        ctx_.book.handOver(orderId, id_, receiver);
+    }
+    return true;
+}
+
+std::vector<OrderId> CourierActor::tryHandOverTo(CourierActor& target) {
+    // DOS candados a la vez. Tomarlos uno por uno, cada hilo en el orden que le toque,
+    // es el interbloqueo de manual: si A se averia y elige a B mientras B se averia y
+    // elige a A, cada uno tendria el suyo esperando el del otro para siempre.
+    //
+    // scoped_lock los toma con un algoritmo que evita ese ciclo, sin importar el orden
+    // en que se le pasen. Por eso las averias simultaneas no pueden bloquear el sistema,
+    // que es lo que exige el §4.
+    const std::scoped_lock guard(mutex_, target.mutex_);
+
+    if (state_.bag.empty() || state_.state == CourierState::brokenDown) {
+        return {};
+    }
+    if (target.stopRequested_ || target.state_.state == CourierState::brokenDown) {
+        return {};
+    }
+    // Todo-o-nada: o entran todas en la bolsa del receptor, o no se mueve ninguna.
+    const std::size_t needed = state_.bag.size();
+    const std::size_t libre =
+        static_cast<std::size_t>(target.state_.bagCapacity) - target.state_.bag.size();
+    if (needed > libre) {
+        return {};
+    }
+
+    std::vector<OrderId> moved = state_.bag;
+    for (const OrderId orderId : moved) {
+        target.state_.bag.push_back(orderId);
+    }
+    state_.bag.clear();
+    state_.state = CourierState::brokenDown;
+    return moved;
 }
 
 void CourierActor::requestStop() {
