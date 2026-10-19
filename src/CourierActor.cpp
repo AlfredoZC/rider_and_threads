@@ -36,7 +36,7 @@ void CourierActor::run() {
         // La averia se sortea ANTES de salir a repartir. Si ocurre, el courier queda
         // sin ordenes, y la vuelta siguiente lo encuentra esperando para siempre:
         // esta fuera de servicio.
-        if (!maybeBreakDown()) {
+        if (!maybeBreakDown(0.5)) {
             deliver(router, orderId);
         }
         lock.lock();
@@ -80,6 +80,16 @@ void CourierActor::deliver(Router& router, OrderId orderId) {
     }
 
     ctx_.book.pickedUp(orderId, id_);
+
+    // La otra mitad del sorteo, ya con la comida encima. Es el caso interesante:
+    // el traspaso tiene que mover una orden RETIRADA, y el receptor termina una
+    // entrega que empezo otro. Sorteando solo antes de salir, eso no pasaba nunca.
+    //
+    // Se reparte la probabilidad entre los dos puntos para no cambiar la tasa de
+    // averias por viaje: lo que cambia es CUANDO ocurren, no cuantas.
+    if (maybeBreakDown(0.5)) {
+        return;   // el traspaso ya vacio la bolsa; la orden la termina otro
+    }
 
     setCourierState(CourierState::toDropoff);
     const Trip toDropoff = travelTo(router, order.dropoffNode);
@@ -183,13 +193,14 @@ void CourierActor::finish(OrderId orderId, bool wasDelivered) {
     }
 }
 
-bool CourierActor::maybeBreakDown() {
-    if (breakdownProbability_ <= 0.0) {
+bool CourierActor::maybeBreakDown(double fraction) {
+    const double probability = breakdownProbability_ * fraction;
+    if (probability <= 0.0) {
         return false;
     }
     // rng_ es de este hilo: ningun otro lo toca, asi que no necesita candado.
     std::uniform_real_distribution<double> chance(0.0, 1.0);
-    if (chance(rng_) >= breakdownProbability_) {
+    if (chance(rng_) >= probability) {
         return false;
     }
     return breakDownAndHandOver();
@@ -202,10 +213,15 @@ bool CourierActor::breakDownAndHandOver() {
         return false;   // sin companeros no hay a quien traspasarle nada
     }
 
-    // Se busca un receptor y se le intenta pasar TODO. Si ninguno puede con todas, la
-    // averia NO ocurre: eso es lo que significa todo-o-nada. Dejar la mitad con un
-    // courier averiado seria perder ordenes, y devolver las ya retiradas a la cola es
-    // imposible porque la comida ya esta en una bolsa.
+    // Todas las ordenes van a UN solo companero, o la averia no ocurre. Eso es lo que
+    // significa todo-o-nada, y es el modelo que define el §6: orderReassigned lleva from
+    // y to obligatorios, los dos ids de courier, asi que las ordenes de un averiado van
+    // a otro courier y no de vuelta a la cola.
+    //
+    // Devolverlas a la cola parecia mejor -mas averias se concretan- pero implica mover
+    // la orden de assigned a created sin ningun evento que lo represente, y el §6 abre
+    // exigiendo que todo cambio de estado quede registrado. Un cambio silencioso rompe
+    // la validacion del log.
     std::vector<OrderId> moved;
     CourierId receiver = kNoCourier;
     for (const auto& candidate : *fleet_) {
@@ -222,10 +238,9 @@ bool CourierActor::breakDownAndHandOver() {
         return false;
     }
 
-    // El registro ocurre YA SOLTADOS los dos candados de courier. Son dos llamadas al
-    // libro, que toma el suyo y despues el del log: respeta la jerarquia
-    // courier -> libro -> log, pero no hay motivo para sostener los de courier mientras
-    // tanto.
+    // El registro ocurre YA SOLTADOS los dos candados de courier. La jerarquia permite
+    // courier -> libro -> log, pero no hay motivo para sostenerlos mientras el libro
+    // escribe.
     ctx_.book.recordBreakdown(id_);
     for (const OrderId orderId : moved) {
         ctx_.book.handOver(orderId, id_, receiver);
@@ -249,12 +264,10 @@ std::vector<OrderId> CourierActor::tryHandOverTo(CourierActor& target) {
     if (target.stopRequested_ || target.state_.state == CourierState::brokenDown) {
         return {};
     }
-    // Todo-o-nada: o entran todas en la bolsa del receptor, o no se mueve ninguna.
-    const std::size_t needed = state_.bag.size();
     const std::size_t libre =
         static_cast<std::size_t>(target.state_.bagCapacity) - target.state_.bag.size();
-    if (needed > libre) {
-        return {};
+    if (state_.bag.size() > libre) {
+        return {};   // todo-o-nada: si no entran todas, no se mueve ninguna
     }
 
     std::vector<OrderId> moved = state_.bag;

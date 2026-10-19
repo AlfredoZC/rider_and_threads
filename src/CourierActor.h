@@ -77,10 +77,12 @@ private:
     void finish(OrderId orderId, bool wasDelivered);
 
     // Sortea una averia y, si toca, traspasa TODAS sus ordenes. Devuelve si se averio.
-    bool maybeBreakDown();
+    // fraction reparte la probabilidad entre los puntos donde se sortea, para que
+    // agregar un punto nuevo cambie CUANDO ocurren las averias y no cuantas.
+    bool maybeBreakDown(double fraction);
     bool breakDownAndHandOver();
-    // Intenta mover todas las ordenes a target. Todo-o-nada: si no entran todas, no se
-    // mueve ninguna. Devuelve los ids movidos, vacio si no se pudo.
+    // Intenta mover TODAS las ordenes a target. Todo-o-nada: si no entran todas, no
+    // se mueve ninguna. Devuelve los ids movidos, vacio si no se pudo.
     std::vector<OrderId> tryHandOverTo(CourierActor& target);
 
     const CourierId id_;

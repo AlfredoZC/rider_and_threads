@@ -1,0 +1,48 @@
+# Averias y traspaso entre couriers (DP.6)
+
+Fecha: 2026-10-19T12:32:21-04:00
+
+## Que se comprobo
+
+El traspaso toma DOS candados de courier a la vez, asi que es el escenario clasico
+de interbloqueo: si A se averia y elige a B mientras B se averia y elige a A, tomar
+los candados uno por uno deja a cada hilo esperando el del otro para siempre.
+
+  300 averias simultaneas cruzadas entre dos couriers ... sin un solo bloqueo
+
+Un interbloqueo no falla, cuelga: la unica forma de buscarlo es provocar la carrera
+muchas veces con temporizaciones distintas. std::scoped_lock toma los dos candados
+con un algoritmo que evita el ciclo sin importar el orden en que se le pasen.
+
+## Mejora del segundo commit: la averia tambien puede ocurrir con la comida encima
+
+Antes la averia se sorteaba una sola vez, antes de salir a repartir, asi que un
+courier NUNCA se averiaba llevando comida. El traspaso que de verdad importa -mover
+una orden ya retirada, que no puede volver al restaurante- era imposible por
+construccion, y el scoped_lock que lo protege no se ejercitaba nunca en una corrida
+real.
+
+Ahora se sortea tambien despues de retirar, con la mitad de la probabilidad en cada
+punto para no cambiar la tasa de averias por viaje: cambia CUANDO ocurren, no
+cuantas.
+
+En corridas aleatorias el caso sigue siendo poco frecuente, porque los couriers
+suelen averiarse antes de llegar al restaurante. Por eso la evidencia es el test
+determinista, que lo provoca a proposito:
+
+  una orden con comida encima pasa al companero, que puede entregarla
+
+## Un camino descartado
+
+Se probo devolver a la cola las ordenes que el courier todavia no habia retirado, en
+vez de traspasarlas. Concretaba muchas mas averias (de 2 a 8 en la misma corrida),
+pero el validador del log lo rechazo por dos motivos:
+
+  - orderReassigned quedaba con el campo to vacio, y el §6 lo define obligatorio
+    como id del courier receptor.
+  - la orden pasaba de assigned a created sin ningun evento que lo registrara, y el
+    §6 abre exigiendo que todo cambio de estado quede en el log.
+
+El modelo del enunciado es claro al respecto: orderReassigned lleva from y to, los
+dos ids de courier, asi que las ordenes de un averiado van a otro courier. Se
+revirtio.
