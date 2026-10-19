@@ -16,9 +16,31 @@ bool OrderBook::setState(Order& order, OrderState to) {
     }
     return true;
 }
+namespace {
+// Avisa al salir del alcance, es decir YA SOLTADO el candado: si se notificara con el
+// candado tomado, el hilo que despierta se encontraria con el candado ocupado y se
+// volveria a dormir.
+//
+// Es un objeto y no tres llamadas sueltas porque admit() tiene tres caminos de salida.
+// Asi el aviso ocurre una sola vez, salga por donde salga, y no se puede olvidar al
+// agregar un cuarto camino. Es la misma idea de lock_guard aplicada a algo que no es un
+// recurso.
+struct NotifyOnExit {
+    std::condition_variable& cv;
+    const bool& should;   // referencia: lee el valor que tenga AL FINAL, no al construir
+    ~NotifyOnExit() {
+        if (should) {
+            cv.notify_all();
+        }
+    }
+};
+}  // namespace
 
 bool OrderBook::admit(Order order) {
+    bool admitted = false;
+    const NotifyOnExit notify{work_, admitted};   // se declara PRIMERO: destruye ULTIMO
     const std::lock_guard<std::mutex> guard(mutex_);
+
 
     // Un id repetido se rechaza antes de tocar nada.
     //
@@ -65,7 +87,9 @@ bool OrderBook::admit(Order order) {
     orders_.emplace(order.id, std::move(order));
     ++pending_;
     ++stats_.created;
+    admitted = true;
     return true;
+
 }
 
 bool OrderBook::reject(OrderId id, RejectReason reason) {
@@ -88,6 +112,32 @@ bool OrderBook::reject(OrderId id, RejectReason reason) {
     log_.write(event);
     return true;
 }
+bool OrderBook::unassign(OrderId id, bool countAsReassigned) {
+    const std::lock_guard<std::mutex> guard(mutex_);
+    const auto it = orders_.find(id);
+    if (it == orders_.end()) {
+        return false;
+    }
+    // assigned -> created es la unica transicion "hacia atras" que permite canTransition,
+    // y existe justamente para esto: una orden asignada que su courier no pudo tomar
+    // quedaria colgada para siempre, porque de assigned no se sale solo.
+    if (!setState(it->second, OrderState::created)) {
+        return false;
+    }
+    it->second.assignedCourier = kNoCourier;
+    if (countAsReassigned) {
+        it->second.reassigned = true;
+        ++stats_.reassigned;
+
+        Event event;
+        event.name = EventName::kOrderReassigned;
+        event.order = id;
+        event.restaurant = it->second.restaurantId;
+        log_.write(event);
+    }
+    return true;
+}
+
 
 bool OrderBook::assign(OrderId id, CourierId courier) {
     const std::lock_guard<std::mutex> guard(mutex_);
@@ -169,6 +219,36 @@ std::optional<Order> OrderBook::find(OrderId id) const {
     }
     return it->second;   // se copia adentro del candado
 }
+bool OrderBook::waitForUnassigned(std::chrono::milliseconds timeout) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    // Espera con plazo y predicado: duerme sin consumir CPU, despierta cuando admit()
+    // avisa, y el predicado la protege de los despertares espurios.
+    //
+    // El plazo NO es una encuesta disfrazada: hace falta porque una orden puede vencer su
+    // acceptTimeoutMs sin que entre ninguna orden nueva, y alguien tiene que ir a
+    // rechazarla. Sin ese requisito, el wait no llevaria plazo.
+    work_.wait_for(lock, timeout, [this] {
+        if (stopWaiting_) {
+            return true;
+        }
+        for (const auto& entry : orders_) {
+            if (entry.second.state == OrderState::created) {
+                return true;
+            }
+        }
+        return false;
+    });
+    return !stopWaiting_;
+}
+
+void OrderBook::stopWaiting() {
+    {
+        const std::lock_guard<std::mutex> guard(mutex_);
+        stopWaiting_ = true;
+    }
+    work_.notify_all();
+}
+
 
 std::vector<OrderId> OrderBook::unassignedIds() const {
     const std::lock_guard<std::mutex> guard(mutex_);
