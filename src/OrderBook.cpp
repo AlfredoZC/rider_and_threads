@@ -232,6 +232,42 @@ std::int64_t OrderBook::markRemainingAsPending() {
     return marked;
 }
 
+bool OrderBook::handOver(OrderId id, CourierId from, CourierId to) {
+    const std::lock_guard<std::mutex> guard(mutex_);
+    const auto it = orders_.find(id);
+    // Solo puede traspasarla quien la tiene: sin este chequeo, un courier podria
+    // quedarse con ordenes de otro.
+    if (it == orders_.end() || it->second.assignedCourier != from) {
+        return false;
+    }
+    if (isFinalState(it->second.state)) {
+        return false;   // ya termino: no hay nada que traspasar
+    }
+    it->second.assignedCourier = to;
+    it->second.reassigned = true;
+    ++stats_.reassigned;
+
+    Event event;
+    event.name = EventName::kOrderReassigned;
+    event.order = id;
+    // El §6 define from y to como los ids de los COURIERS que entregan y reciben, con
+    // el mismo formato que el campo courier del resto de los eventos.
+    event.from = "c" + std::to_string(from);
+    event.to = "c" + std::to_string(to);
+    log_.write(event);
+    return true;
+}
+
+void OrderBook::recordBreakdown(CourierId courier) {
+    const std::lock_guard<std::mutex> guard(mutex_);
+    ++stats_.breakdowns;
+
+    Event event;
+    event.name = EventName::kCourierBreakdown;
+    event.courier = courier;
+    log_.write(event);
+}
+
 std::optional<Order> OrderBook::find(OrderId id) const {
     const std::lock_guard<std::mutex> guard(mutex_);
     const auto it = orders_.find(id);

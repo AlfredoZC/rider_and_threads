@@ -31,6 +31,7 @@ struct OrderStats {
     std::int64_t delivered = 0;
     std::int64_t rejected = 0;
     std::int64_t reassigned = 0;
+    std::int64_t breakdowns = 0;
     std::int64_t pending = 0;          // vivas en este instante
     std::int64_t avgDeliveryMs = 0;
     std::int64_t maxDeliveryMs = 0;
@@ -83,6 +84,16 @@ public:
     // cerrar, y DESPUES de que todos los hilos terminaron: si quedara alguno corriendo
     // podria mover una orden justo despues de contarla. Devuelve cuantas marco.
     std::int64_t markRemainingAsPending();
+
+    // Traspasa una orden de un courier a otro: cambia a quien la tiene asignada y
+    // registra orderReassigned con from y to, que el §6 define como los ids de los dos
+    // couriers. El estado de la orden NO cambia: una que ya estaba retirada sigue
+    // retirada, solo que ahora la lleva otro.
+    bool handOver(OrderId id, CourierId from, CourierId to);
+
+    // Deja constancia de una averia. Vive aca y no en el courier porque el libro es
+    // quien lleva los contadores del resumen y quien escribe en el log.
+    void recordBreakdown(CourierId courier);
 
     // Una copia del estado actual, o nullopt si el id no existe. Copia: quien la recibe
     // trabaja fuera del candado.

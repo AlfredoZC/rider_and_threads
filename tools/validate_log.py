@@ -41,7 +41,9 @@ LLEVA_A = {
     "orderPickedUp": "pickedUp",
     "orderDelivered": "delivered",
     "orderRejected": "rejected",
-    "orderReassigned": "created",
+    # orderReassigned NO cambia el estado de la orden: en un traspaso por averia
+    # cambia quien la lleva, no en que etapa esta. Una ya retirada sigue retirada,
+    # con la comida en la bolsa del nuevo courier. Por eso no figura aca.
 }
 
 LEGALES = {
@@ -96,6 +98,15 @@ def main(argv):
                 if campo in e and not isinstance(e[campo], str):
                     errores.append(
                         f"linea {n}: {campo} tiene que ser cadena, es {type(e[campo]).__name__}")
+
+            if nombre == "orderReassigned":
+                for campo in ("from", "to"):
+                    valor = e.get(campo, "")
+                    if not (isinstance(valor, str) and valor.startswith("c")):
+                        errores.append(
+                            f"linea {n}: {campo}={valor!r} tiene que ser un id de courier")
+                if e.get("from") == e.get("to"):
+                    errores.append(f"linea {n}: un courier se traspasa a si mismo")
 
             if nombre == "orderRejected" and e.get("reason") not in MOTIVOS:
                 errores.append(f"linea {n}: motivo de rechazo invalido {e.get('reason')!r}")
