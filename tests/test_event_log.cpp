@@ -42,9 +42,7 @@ int main() {
         created.name = EventName::kOrderCreated;
         created.order = 42;
         created.restaurant = "r0";
-        created.from = "n15";
-        created.to = "n420";
-        const std::int64_t t = log.write(created);
+                const std::int64_t t = log.write(created);
         assert(t >= 0);
 
         Event rejected;
@@ -63,10 +61,10 @@ int main() {
 
     const nlohmann::json a = nlohmann::json::parse(lines[0]);
     assert(a["event"] == "orderCreated");
-    assert(a["order"] == 42);
+    assert(a["order"] == "o42");     // §6: cadena con prefijo, no numero
     assert(a["restaurant"] == "r0");
-    assert(a["from"] == "n15");
-    assert(a["to"] == "n420");
+    assert(!a.contains("from"));   // §6: from/to son ids de courier, solo en orderReassigned
+    assert(!a.contains("to"));
     assert(a.contains("t"));
     assert(!a.contains("courier"));     // no aplica: no se escribe
     assert(!a.contains("reason"));
@@ -108,9 +106,7 @@ int main() {
                     e.order = static_cast<OrderId>(id * 1000 + i);
                     e.courier = static_cast<CourierId>(id);
                     e.restaurant = "r0";
-                    e.from = "n15";
-                    e.to = "n420";
-                    log.write(e);
+                                    log.write(e);
                 }
             });
         }
@@ -134,7 +130,7 @@ int main() {
             assert(t >= lastT);
             lastT = t;
 
-            perCourier[j["courier"].get<std::size_t>()]++;
+            perCourier[std::stoul(j["courier"].get<std::string>().substr(1))]++;
         }
         for (int id = 1; id <= kThreads; ++id) {
             assert(perCourier[static_cast<std::size_t>(id)] == kPerThread);

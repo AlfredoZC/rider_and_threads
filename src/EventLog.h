@@ -45,8 +45,11 @@ struct Event {
   OrderId order = kNoOrder;
   CourierId courier = kNoCourier;
   std::string restaurant;
+  // Ids de COURIER, y solo para orderReassigned: son el que entrega y el que
+  // recibe las ordenes en un traspaso por averia (§6). No son nodos del mapa.
   std::string from;
   std::string to;
+
   std::string reason;
 };
 

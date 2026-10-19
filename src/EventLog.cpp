@@ -41,14 +41,19 @@ void appendText(std::string &out, const char *key, const std::string &value) {
   out += '"';
 }
 
-void appendId(std::string &out, const char *key, std::uint64_t value) {
+void appendId(std::string &out, const char *key, char prefix, std::uint64_t value) {
   if (value == 0) {
-    return; // 0 es kNoOrder / kNoCourier: no aplica
+    return; // 0 es kNoOrder / kNoCourier: el campo no aplica a este evento
   }
+  // El §6 pide los identificadores como CADENAS con prefijo ("o17", "c5"), no
+  // como numeros. El prefijo se agrega aca, en un solo lugar, y no en cada
+  // llamador: asi no hay forma de que dos sitios lo escriban distinto.
   out += ",\"";
   out += key;
-  out += "\":";
+  out += "\":\"";
+  out += prefix;
   out += std::to_string(value);
+  out += '"';
 }
 
 } // namespace
@@ -69,8 +74,8 @@ std::int64_t EventLog::write(const Event &event) {
   tail += ",\"event\":\"";
   tail += event.name;
   tail += '"';
-  appendId(tail, "order", event.order);
-  appendId(tail, "courier", event.courier);
+  appendId(tail, "order", 'o', event.order);
+  appendId(tail, "courier", 'c', event.courier);
   appendText(tail, "restaurant", event.restaurant);
   appendText(tail, "from", event.from);
   appendText(tail, "to", event.to);

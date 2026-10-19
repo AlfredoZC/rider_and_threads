@@ -62,9 +62,6 @@ bool OrderBook::admit(Order order) {
 
     Event event;
     event.order = order.id;
-    event.restaurant = order.restaurantId;
-    event.from = order.pickupNode;
-    event.to = order.dropoffNode;
 
     // Verificar y actuar, los dos adentro del mismo candado.
     if (pending_ >= maxPending_) {
@@ -80,6 +77,9 @@ bool OrderBook::admit(Order order) {
     }
 
     event.name = EventName::kOrderCreated;
+    // El §6 lista restaurant solo en orderCreated, pickupStarted y orderPickedUp:
+    // por eso no se pone antes de la bifurcacion, donde lo heredaria el rechazo.
+    event.restaurant = order.restaurantId;
     // write() devuelve la t que uso: se guarda como createdMs para que el log y la
     // orden cuenten exactamente la misma historia, no dos que difieren en unos ms.
     order.createdMs = log_.write(event);
@@ -107,7 +107,6 @@ bool OrderBook::reject(OrderId id, RejectReason reason) {
     Event event;
     event.name = EventName::kOrderRejected;
     event.order = id;
-    event.restaurant = it->second.restaurantId;
     event.reason = toString(reason);
     log_.write(event);
     return true;
@@ -132,7 +131,6 @@ bool OrderBook::unassign(OrderId id, bool countAsReassigned) {
         Event event;
         event.name = EventName::kOrderReassigned;
         event.order = id;
-        event.restaurant = it->second.restaurantId;
         log_.write(event);
     }
     return true;
@@ -158,7 +156,6 @@ bool OrderBook::assign(OrderId id, CourierId courier) {
     event.name = EventName::kOrderAssigned;
     event.order = id;
     event.courier = courier;
-    event.restaurant = it->second.restaurantId;
     it->second.assignedMs = log_.write(event);
     return true;
 }
@@ -198,7 +195,6 @@ bool OrderBook::delivered(OrderId id, CourierId courier) {
     event.name = EventName::kOrderDelivered;
     event.order = id;
     event.courier = courier;
-    event.to = it->second.dropoffNode;
     it->second.deliveredMs = log_.write(event);
 
     // Los numeros del resumen (§6) se acumulan en el MISMO candado que el cambio de
