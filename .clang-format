@@ -1,0 +1,21 @@
+# Estilo unico del proyecto, alineado con el del material de la materia
+# (lia-221-2026). Medido sobre sus 147 archivos .cpp/.h:
+#
+#   sangria       2 espacios   (2489 lineas con 2, contra 849 con 4)
+#   referencias   Tipo& nombre (227 casos, cero de "Tipo &nombre")
+#   llaves        en la misma linea que la firma (602 contra 13)
+#   largo         p95 = 89 columnas, p99 = 121
+#
+# Eso es exactamente el estilo Google con su sangria por defecto, asi que se parte de
+# ahi y solo se fija el ancho de columna.
+#
+# Este archivo existe porque sin el, el formateador del editor usa su propia
+# configuracion incorporada (LLVM: 2 espacios pero "Tipo &nombre") y reformatea
+# archivos escritos en otro estilo. Asi aparecieron seis archivos del proyecto con un
+# estilo distinto al resto, y diffs donde cambias tres lineas y el PR muestra
+# doscientas.
+BasedOnStyle: Google
+ColumnLimit: 100
+PointerAlignment: Left
+DerivePointerAlignment: false
+SortIncludes: CaseSensitive
