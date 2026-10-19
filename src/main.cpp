@@ -19,6 +19,7 @@
 
 #include "Config.h"
 #include "CourierActor.h"
+#include "Dispatcher.h"
 #include "EventLog.h"
 #include "OrderBook.h"
 #include "OrderGenerator.h"
@@ -209,6 +210,11 @@ int main(int argc, char** argv) {
     for (auto& actor : fleet) {
         threads.emplace_back(&CourierActor::run, actor.get());
     }
+    // El dispatcher se construye DESPUES de la flota, porque guarda una referencia a
+    // ella. Su hilo arranca junto con los demas.
+    Dispatcher dispatcher(cfg, ctx, fleet);
+    std::thread dispatcherThread(&Dispatcher::run, &dispatcher);
+
     std::thread generatorThread(&OrderGenerator::run, &generator);
 
     cv::namedWindow(windowName, cv::WINDOW_AUTOSIZE);
@@ -238,6 +244,11 @@ int main(int argc, char** argv) {
     // repartidores se están yendo.
     generator.requestStop();
     generatorThread.join();
+
+    // Despues el dispatcher: ya no entran ordenes nuevas, asi que no tiene sentido
+    // que siga repartiendo mientras los couriers se van.
+    dispatcher.requestStop();
+    dispatcherThread.join();
 
     // Primero se les pide a TODOS que paren, y recién después se los espera. Al revés
     // —pedir y esperar a cada uno antes de avisarle al siguiente— se serializa un cierre
