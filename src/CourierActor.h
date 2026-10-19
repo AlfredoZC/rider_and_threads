@@ -5,42 +5,63 @@
 // que el hilo espera. Igual que Order frente a OrderBook.
 //
 // No es copiable ni movible: tiene un mutex y una condition_variable adentro, y otros
-// hilos van a guardar punteros a el. Por eso la flota se guarda como
-// vector<unique_ptr<CourierActor>> y no como vector<CourierActor>.
+// hilos guardan punteros a el. Por eso la flota es vector<unique_ptr<CourierActor>>.
 #pragma once
 
 #include <condition_variable>
+#include <cstdint>
 #include <mutex>
 #include <string>
 
 #include "Courier.h"
 #include "Ids.h"
+#include "Order.h"
+#include "Router.h"
+#include "SimContext.h"
 
 class CourierActor {
 public:
-    CourierActor(CourierId id, const std::string& startNode, int bagCapacity);
+    CourierActor(CourierId id, const std::string& startNode, int bagCapacity,
+                 const SimContext& ctx);
 
     CourierActor(const CourierActor&) = delete;
     CourierActor& operator=(const CourierActor&) = delete;
 
-    // El cuerpo del hilo. Termina cuando alguien llama a requestStop().
+    // El cuerpo del hilo: espera, reparte, vuelve a esperar.
     void run();
 
-    // La llama el hilo principal para que el courier termine. Es seguro llamarla
-    // muchas veces y desde cualquier hilo.
+    // La llama el hilo principal. Es segura desde cualquier hilo y cuantas veces sea.
     void requestStop();
 
-    // Una copia del estado, tomada bajo candado. El renderer dibuja a partir de la
-    // copia, sin sostener el candado mientras pinta.
+    // Recibe una orden. Devuelve false si no hay lugar en la bolsa, si esta averiado o si
+    // ya le pidieron parar. Verificar y agregar ocurren bajo el MISMO candado: si el
+    // llamador pudiera consultar primero y ofrecer despues, dos dispatchers podrian
+    // pasarse de bagCapacity.
+    bool offer(const Order& order);
+
+    // Una copia del estado, tomada bajo candado. El dibujo y las estimaciones trabajan
+    // sobre la copia, sin sostener el candado mientras calculan.
     Courier snapshot() const;
 
-    CourierId id() const { return id_; }   // id_ es const: no hace falta candado
+    CourierId id() const { return id_; }   // id_ es const: no necesita candado
 
 private:
-    const CourierId id_;
+    // En que termino un trayecto. Se distingue "no hay camino" de "nos pidieron parar"
+    // porque la primera es un rechazo unreachable del §4 y la segunda no lo es.
+    enum class Trip { arrived, stopped, unreachable };
 
-    // mutable para poder tomar el candado dentro de snapshot(), que es const: consultar
-    // el estado no lo modifica conceptualmente, pero tomar un mutex si toca sus bytes.
+    Trip travelTo(Router& router, const std::string& destNode);
+    void deliver(Router& router, OrderId orderId);
+
+    // Espera un lapso de tiempo SIMULADO. Devuelve false si nos pidieron parar.
+    bool waitSim(std::int64_t simMs);
+
+    void setCourierState(CourierState s);
+    void finish(OrderId orderId, bool wasDelivered);
+
+    const CourierId id_;
+    const SimContext ctx_;
+
     mutable std::mutex mutex_;
     std::condition_variable cv_;
 

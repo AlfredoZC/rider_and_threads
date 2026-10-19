@@ -105,6 +105,39 @@ int main() {
         std::cout << "  un id repetido se rechaza sin romper los contadores\n";
     }
 
+    // --- el ciclo completo de una orden y los numeros del resumen
+    {
+        EventLog log("tests/bin/book_cycle.log", clock);
+        OrderBook book(10, clock, log);
+        assert(book.admit(makeOrder(1)));
+
+        assert(book.assign(1, 7));
+        assert(!book.assign(1, 9));          // ya asignada: no se asigna de nuevo
+        assert(book.find(1)->assignedCourier == 7);
+
+        assert(!book.pickedUp(1, 9));        // otro courier no puede retirarla
+        assert(book.pickedUp(1, 7));
+        assert(!book.pickedUp(1, 7));        // ni dos veces
+
+        assert(!book.delivered(1, 9));       // tampoco entregarla
+        assert(book.delivered(1, 7));
+        assert(!book.delivered(1, 7));       // ni entregarla dos veces
+
+        const Order done = *book.find(1);
+        assert(done.state == OrderState::delivered);
+        assert(done.assignedMs >= done.createdMs);
+        assert(done.pickedUpMs >= done.assignedMs);
+        assert(done.deliveredMs >= done.pickedUpMs);
+
+        const OrderStats s = book.stats();
+        assert(s.delivered == 1);
+        assert(s.pending == 0);
+        assert(s.created == s.delivered + s.rejected + s.pending);
+        assert(s.maxDeliveryMs == deliveryMs(done));
+        assert(s.avgDeliveryMs == deliveryMs(done));
+        std::cout << "  ciclo completo: asignada, retirada y entregada una sola vez\n";
+    }
+
     // --- LA prueba: 16 hilos admitiendo a la vez contra un limite de 50
     {
         EventLog log("tests/bin/book_burst.log", clock);

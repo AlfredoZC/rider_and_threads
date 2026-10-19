@@ -193,50 +193,143 @@ PENDIENTE. Decisiones que el enunciado deja abiertas y que se documentan aquí:
 
 ## 7. Esquema del programa: hilos y canales
 
-> Diseño planificado. PENDIENTE: actualizar con los nombres reales del código al terminar.
+Estado: lo marcado **[hecho]** está implementado y probado; **[plan]** es diseño todavía no
+escrito. Se actualiza en cada avance.
+
+### Flujo de una orden, de punta a punta
+
+```
+GENERADOR   [hecho]   espera un intervalo aleatorio (wait_for, 0% CPU)
+                      crea la orden y llama a OrderBook.admit()
+                              |
+                              |  si pending_ == maxPending -> orderRejected(queueFull)
+                              v
+            [plan]    despierta al dispatcher
+                              |
+DISPATCHER  [plan]    espera en su cv (0% CPU) <-------------------+
+                      toma las ordenes sin asignar
+                      pide una estimacion POR COURIER, en paralelo
+                        - un std::future por candidato
+                        - plazo de quoteTimeoutMs REALES
+                        - las que llegan tarde se descartan
+                        - si una lanza, la excepcion llega en get() y no tumba nada
+                      elige el mejor tiempo estimado
+                      OrderBook.assign(orden, courier)   <- candado: microsegundos
+                      courier.offer(orden)               -> despierta al courier
+                              |
+COURIER     [hecho]   espera en su cv (0% CPU) <-------------------+
+            [plan]    calcula su ruta con SU PROPIO Router
+                      viaja tramo a tramo                <- SIN candados, segundos
+                      llega al restaurante -> pickupStarted
+                      espera a que la comida este lista si llego antes
+                      OrderBook.pickedUp()               <- candado: microsegundos
+                      viaja al cliente                   <- SIN candados
+                      OrderBook.delivered()              <- candado: microsegundos
+                      vuelve a esperar en su cv
+```
+
+El patrón que se repite: **los candados aparecen en instantes puntuales y duran
+microsegundos; el trabajo largo ocurre siempre afuera**.
+
+### Por qué la orden no se "reserva" sosteniendo un candado
+
+Un viaje largo de este mapa son 213 s simulados, o 3,5 s reales con `timeScale: 60`.
+Sostener un mutex durante todo ese tiempo dejaría al renderer sin poder llamar a
+`snapshot()` (lo necesita 30 veces por segundo) y congelaría la ventana.
+
+La exclusividad que dura en el tiempo **se modela con estado, no con un candado**: la orden
+está reservada porque su estado dice `assigned` y `assignedCourier` apunta a su courier.
+Ningún otro la puede tomar porque `canTransition(assigned, assigned)` devuelve `false`, y esa
+comprobación ocurre dentro del candado del `OrderBook`, que dura microsegundos.
+
+> **Candado = operación corta e indivisible. Estado = propiedad que dura en el tiempo.**
 
 ### Hilos de ejecución
 
-| Hilo | Cantidad | Sobre qué hace loop | Cómo espera |
-|------|----------|---------------------|-------------|
-| main / render | 1 | Dibuja un frame, revisa la señal y el fin de `durationS` | `cv::waitKey` (ritmo de frames) |
-| OrderGenerator | 1 | Espera un intervalo aleatorio simulado y crea 1..`burstMax` órdenes | `condition_variable::wait_until` interrumpible |
-| Dispatcher | 1 | Toma una orden del libro, pide cotizaciones en paralelo y la asigna | `condition_variable` del `OrderBook` |
-| QuoteWorker | según `hardware_concurrency()` | Calcula una cotización y cumple su `promise` | `condition_variable` del `QuotePool` |
-| Courier | `fleet.couriers` | Idle → restaurante → recoger → entregar (con averías) | su propia `condition_variable` / la del restaurante |
+| Hilo | Cantidad | Sobre qué hace loop | Cómo espera | Estado |
+|------|----------|---------------------|-------------|--------|
+| main / render | 1 | Dibuja un frame y revisa teclado y señal | `cv::waitKey` (ritmo de frames) | [hecho] parcial |
+| `OrderGenerator` | 1 | Espera un intervalo exponencial y crea 1..`burstMax` órdenes | `cv.wait_for` con predicado, interrumpible | [hecho] |
+| `Dispatcher` | 1 | Toma una orden, pide cotizaciones en paralelo y la asigna | `condition_variable` | [plan] |
+| Tareas de cotización | una por candidato | Calcula `estimateDeliveryMs` y cumple su `future` | no espera: termina | [hecho] la función, [plan] el lanzamiento |
+| `CourierActor` | `fleet.couriers` (8) | Idle → restaurante → recoger → entregar | su propia `condition_variable` | [hecho] el ciclo de vida, [plan] el reparto |
 
 ### Canales entre hilos
 
-| # | Canal | Mecanismo |
-|---|-------|-----------|
-| 1 | OrderGenerator → OrderBook → Dispatcher | Monitor acotado productor/consumidor |
-| 2 | Dispatcher → QuotePool → Dispatcher | Cola de tareas + `std::promise`/`std::future` con `wait_until` |
-| 3 | Dispatcher → Courier | Método del monitor `Courier::offer` + notificación |
-| 4 | Courier ↔ Restaurant | Monitor con cola FIFO y slots |
-| 5 | Courier averiado → Courier receptor | `std::scoped_lock` sobre ambos couriers |
-| 6 | Courier → OrderBook / Fleet | Aviso de capacidad liberada (contador de generación + notificación) |
-| 7 | Todos → EventLog | Monitor (líneas completas + contadores) |
-| 8 | Render / QuoteWorkers ← Courier | `snapshot()` que devuelve una copia |
-| 9 | main → todos | `stop()` en cada monitor; señal vía `std::atomic<bool>` |
-
-PENDIENTE: diagrama.
+| # | Canal | Mecanismo | Estado |
+|---|-------|-----------|--------|
+| 1 | `OrderGenerator` → `OrderBook` | monitor acotado; `admit()` verifica y agrega bajo un mismo candado | [hecho] |
+| 2 | `OrderBook` → `Dispatcher` | notificación al admitir una orden | [plan] |
+| 3 | `Dispatcher` → tareas de cotización | `std::future` con plazo de `quoteTimeoutMs` reales | [plan] |
+| 4 | `Dispatcher` → `CourierActor` | `offer()` sobre el monitor del courier + `notify_one` | [plan] |
+| 5 | `CourierActor` ↔ `Restaurant` | monitor con cola FIFO y `pickupSlots` | [plan] |
+| 6 | Courier averiado → courier receptor | `std::scoped_lock` sobre los dos couriers | [plan] |
+| 7 | Todos → `EventLog` | monitor; una línea JSON completa por evento | [hecho] |
+| 8 | Renderer / dispatcher ← `CourierActor` | `snapshot()` devuelve una copia tomada bajo candado | [hecho] |
+| 9 | main → todos | `requestStop()` en cada monitor y `join()` de todos los hilos | [hecho] |
 
 ## 8. Jerarquía de locks y ausencia de deadlock
 
-> Diseño planificado. PENDIENTE: confirmar contra el código final.
+Un interbloqueo necesita que dos hilos tomen dos candados en **orden distinto**. La defensa es
+fijar un orden total y no violarlo nunca.
 
-| Nivel | Mutex | Puede tomar a continuación |
-|-------|-------|----------------------------|
-| 1 | `Courier` (uno, o dos a la vez con `std::scoped_lock`) | `EventLog`, `Fleet` |
-| 2 | `OrderBook`, `Restaurant`, `QuotePool`, `Fleet` | `EventLog` |
-| 3 | `EventLog` | ninguno |
+| Nivel | Mutex | Puede tomar a continuación | Estado |
+|-------|-------|----------------------------|--------|
+| 1 | `CourierActor` (uno, o dos a la vez con `std::scoped_lock`) | `OrderBook`, `EventLog` | [hecho] |
+| 2 | `OrderBook`, `Restaurant` | `EventLog` | [hecho] el libro |
+| 3 | `EventLog` | ninguno (hoja) | [hecho] |
 
-PENDIENTE: argumento completo.
+Dos propiedades lo sostienen hoy:
+
+- **`EventLog::write()` no llama a nada que pueda tomar otro candado.** Es hoja por
+  construcción, así que registrar un evento teniendo tomado el candado del `OrderBook` o el de
+  un courier no puede bloquear a nadie.
+- **`OrderGenerator` suelta su propio candado antes de llamar a `admit()`.** Nunca sostiene dos
+  a la vez, de modo que no puede participar de un ciclo.
 
 ## 9. Argumento de ausencia de data races
 
-PENDIENTE: un párrafo por objeto compartido (`CityGraph`, `SimClock`, `EventLog`, `OrderBook`, `Restaurant`,
-`Courier`, `Fleet`, `QuotePool`, flag de señal).
+Un objeto por párrafo, con la evidencia que lo respalda.
+
+**`Config`** — se carga y valida por completo antes de crear ningún hilo y después nadie la
+modifica. Un dato que nadie escribe no puede tener data races, así que se comparte por
+referencia sin ninguna sincronización.
+
+**`CityGraph`** — mismo caso. Se construye una vez y no existe ningún método que lo modifique:
+todos son `const`. Lo leen simultáneamente los couriers y las tareas de cotización sin candado.
+
+**`SimClock`** — no guarda la hora en ninguna variable. Solo conserva el instante de arranque y
+la escala, fijados en el constructor, y cada consulta le pregunta la hora al sistema operativo;
+`steady_clock::now()` es thread-safe por norma. *Verificado: 4 hilos leyendo `nowMs()` en
+paralelo, monótono en los cuatro.*
+
+**`Router`** — es el único objeto con estado de trabajo mutable, y por eso **no se comparte**:
+cada hilo construye el suyo. La firma `shortestPath()` se deja deliberadamente no-`const` para
+que el compilador frene cualquier intento de compartirlo como `const&`. *Verificado: 1600
+estimaciones calculadas por 8 hilos, cada uno con su Router, dan exactamente los mismos números
+que calculadas de a una.*
+
+**`EventLog`** — monitor. El `ofstream` y el mutex son privados y la única forma de escribir es
+`write()`. El formateo del JSON ocurre fuera del candado; dentro queda solo leer el reloj y
+volcar la línea, y la marca de tiempo se toma adentro para que el orden de las líneas sea el
+orden de las `t`. *Verificado: 8 hilos escribiendo 500 eventos cada uno, las 4000 líneas parsean
+como JSON, ninguna perdida, `t` nunca retrocede. ThreadSanitizer: 0 reportes, y el control
+negativo con el `lock_guard` comentado sí produce un race (`analysis/tsan_event_log.txt`).*
+
+**`OrderBook`** — monitor. No expone un `pendingCount()` público a propósito: si lo hiciera, el
+llamador consultaría y agregaría en dos pasos y entre ellos se soltaría el candado. `admit()`
+verifica y agrega bajo un mismo candado. *Verificado: 1600 intentos desde 16 hilos contra un
+`maxPending` de 50 admiten exactamente 50.*
+
+**`CourierActor`** — monitor con `condition_variable`. La bandera de parada se escribe con el
+candado tomado, que es lo que impide el aviso perdido; `wait()` lleva predicado, que es lo que
+cubre los despertares espurios. *Verificado: 8 couriers ociosos 400 ms consumieron 0,151 ms de
+CPU (girando habrían consumido unos 3200), terminan en 3 ms, y 300 ciclos de arrancar y parar
+no colgaron nunca. ThreadSanitizer: 0 reportes (`analysis/tsan_courier_actor.txt`).*
+
+**`OrderGenerator`** — es dueño exclusivo de su `OrderFactory` y su `mt19937`, así que esos dos
+no llevan sincronización: un dato con un único dueño no se protege, se posee. Lo único
+compartido es su bandera de parada y su contador, bajo su propio candado.
 
 ## 10. Mapa de conceptos
 

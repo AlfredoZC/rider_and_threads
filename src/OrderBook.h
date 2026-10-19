@@ -49,10 +49,19 @@ public:
     // Tambien devuelve false si el id ya existe, y ahi no registra ni cuenta nada:
     // es una guarda contra un defecto silencioso, explicada en admit().
     bool admit(Order order);
+    
 
     // Rechaza una orden viva (unreachable, noCourier). false si ya estaba en un
     // estado final.
     bool reject(OrderId id, RejectReason reason);
+
+    // Las tres transiciones del reparto. Todas devuelven false si la orden no existe, si
+    // la transicion no es legal, o si el courier que la pide no es el que la tiene
+    // asignada. Ese ultimo chequeo es lo que impide que un courier entregue una orden
+    // que lleva otro.
+    bool assign(OrderId id, CourierId courier);
+    bool pickedUp(OrderId id, CourierId courier);
+    bool delivered(OrderId id, CourierId courier);
 
     // Una copia del estado actual, o nullopt si el id no existe. Copia: quien la recibe
     // trabaja fuera del candado.

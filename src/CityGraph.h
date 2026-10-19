@@ -36,40 +36,37 @@ inline constexpr NodeIndex kNoNode = 0xFFFFFFFFu;
 struct Edge {
   NodeIndex to = kNoNode;
   double meters = 0.0;
-  std::int64_t travelMs =
-      0; // tiempo SIMULADO a speedKmh; timeScale no entra acá
+  std::int64_t travelMs = 0;  // tiempo SIMULADO a speedKmh; timeScale no entra acá
 };
 
 class CityGraph {
-public:
+ public:
   // Construye el grafo desde una Config ya validada por loadConfig().
-  explicit CityGraph(const Config &cfg);
+  explicit CityGraph(const Config& cfg);
 
   std::size_t nodeCount() const { return nodes_.size(); }
   std::size_t edgeCount() const { return edgeCount_; }
 
   // Traducción en la frontera. Devuelve kNoNode si el id no existe.
-  NodeIndex indexOf(const std::string &id) const;
+  NodeIndex indexOf(const std::string& id) const;
 
-  const std::string &idOf(NodeIndex i) const { return nodes_[i].id; }
+  const std::string& idOf(NodeIndex i) const { return nodes_[i].id; }
   double latOf(NodeIndex i) const { return nodes_[i].lat; }
   double lonOf(NodeIndex i) const { return nodes_[i].lon; }
 
   // Las aristas que SALEN de i. Es la pregunta que hace Dijkstra en su bucle
   // interno.
-  const std::vector<Edge> &edgesFrom(NodeIndex i) const {
-    return adjacency_[i];
-  }
+  const std::vector<Edge>& edgesFrom(NodeIndex i) const { return adjacency_[i]; }
 
-private:
+ private:
   struct Node {
     std::string id;
     double lat = 0.0;
     double lon = 0.0;
   };
 
-  std::vector<Node> nodes_;                        // índice -> nodo
-  std::unordered_map<std::string, NodeIndex> ids_; // id de texto -> índice
-  std::vector<std::vector<Edge>> adjacency_; // índice -> aristas que salen
+  std::vector<Node> nodes_;                         // índice -> nodo
+  std::unordered_map<std::string, NodeIndex> ids_;  // id de texto -> índice
+  std::vector<std::vector<Edge>> adjacency_;        // índice -> aristas que salen
   std::size_t edgeCount_ = 0;
 };
