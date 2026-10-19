@@ -222,6 +222,38 @@ int main() {
         std::cout << "  stopWaiting() la despierta y devuelve false" << "\n";
     }
 
+    // --- al cerrar, las ordenes vivas pasan a pending y el invariante cierra (§7)
+    {
+        EventLog log("tests/bin/book_pending.log", clock);
+        OrderBook book(50, clock, log);
+        for (OrderId id = 1; id <= 5; ++id) {
+            assert(book.admit(makeOrder(id)));
+        }
+        // una entregada, una rechazada, y tres vivas en distintas etapas
+        assert(book.assign(1, 1) && book.pickedUp(1, 1) && book.delivered(1, 1));
+        assert(book.reject(2, RejectReason::unreachable));
+        assert(book.assign(3, 1));
+        assert(book.assign(4, 1) && book.pickedUp(4, 1));
+        // la 5 queda en created
+
+        const std::int64_t marked = book.markRemainingAsPending();
+        assert(marked == 3);                 // solo las vivas: la entregada y la
+                                             // rechazada son finales y no se tocan
+        const OrderStats s = book.stats();
+        assert(s.created == 5);
+        assert(s.delivered == 1);
+        assert(s.rejected == 1);
+        assert(s.pending == 0);              // ya ninguna esta viva
+        assert(book.find(1)->state == OrderState::delivered);
+        assert(book.find(2)->state == OrderState::rejected);
+        assert(book.find(3)->state == OrderState::pending);
+        assert(book.find(5)->state == OrderState::pending);
+
+        // llamarla dos veces no cambia nada: de pending no se sale
+        assert(book.markRemainingAsPending() == 0);
+        std::cout << "  al cerrar, 3 ordenes vivas pasaron a pending y 2 finales quedaron igual\n";
+    }
+
     // --- LA prueba: 16 hilos admitiendo a la vez contra un limite de 50
     {
         EventLog log("tests/bin/book_burst.log", clock);

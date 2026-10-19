@@ -1,0 +1,44 @@
+# Parada limpia (DP.9 / seccion 7 del enunciado)
+
+Fecha: 2026-10-19T11:06:23-04:00
+Binario: build limpio desde el arbol commiteado, 0 advertencias.
+
+El enunciado exige: registrar simulationStopping, terminar todos los hilos sin
+abandonar ninguno, reportar las ordenes pendientes y salir con codigo 0 en menos de
+5 segundos, tanto al cumplirse durationS como al recibir SIGINT o SIGTERM.
+
+## 1. SIGINT con los couriers a mitad de viaje
+
+  ./delivery_sim config/equipetrol.json --log events.log &
+  sleep 6 && kill -INT $!
+
+  codigo de salida ....... 0
+  tiempo hasta cerrar .... 212 ms   (limite: 5000)
+  simulationStopping ..... 1 linea en el log
+  resumen ................ created=29 delivered=2 rejected=0 pending=27
+  invariante ............. 29 = 2 + 0 + 27   OK
+
+## 2. Corte por durationS
+
+  durationS = 180 s simulados, timeScale = 60  =>  3 s reales esperados
+
+  codigo de salida ....... 0
+  duracion real .......... 3070 ms
+  resumen ................ created=19 delivered=0 rejected=0 pending=19
+  invariante ............. 19 = 0 + 0 + 19   OK
+
+## 3. SIGTERM
+
+  codigo de salida ....... 0
+  tiempo hasta cerrar .... 29 ms
+
+## Por que cierra tan rapido
+
+Ningun hilo duerme: todos esperan con plazo sobre una variable de condicion, asi que
+la peticion de parada los despierta al instante en vez de tener que esperar a que
+venza lo que estuvieran esperando. Un courier a mitad de un tramo de 200 segundos
+simulados abandona el viaje en milisegundos.
+
+El manejador de señales solo levanta una bandera atomica sin candado. No registra ni
+imprime: una señal interrumpe al hilo donde este, y si ese hilo tuviera tomado el
+mutex del log, pedirlo desde el manejador bloquearia el programa contra si mismo.
