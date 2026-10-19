@@ -138,6 +138,90 @@ int main() {
         std::cout << "  ciclo completo: asignada, retirada y entregada una sola vez\n";
     }
 
+    // --- unassign: una orden asignada vuelve a la cola en vez de quedar colgada
+    //
+    // Sin esto, si la oferta al courier falla la orden se queda en assigned con un
+    // courier que no la tiene: nadie la entrega y nadie la rechaza.
+    {
+        EventLog log("tests/bin/book_unassign.log", clock);
+        OrderBook book(10, clock, log);
+        assert(book.admit(makeOrder(1)));
+        assert(book.assign(1, 5));
+
+        // oferta rechazada: vuelve a la cola pero NO cuenta como reasignacion
+        assert(book.unassign(1, false));
+        const Order back = *book.find(1);
+        assert(back.state == OrderState::created);
+        assert(back.assignedCourier == kNoCourier);
+        assert(!back.reassigned);
+        assert(book.stats().reassigned == 0);
+        assert(book.unassignedIds().size() == 1);   // vuelve a estar disponible
+
+        // averia: tambien vuelve, pero esta si cuenta (§6)
+        assert(book.assign(1, 6));
+        assert(book.unassign(1, true));
+        assert(book.find(1)->reassigned);
+        assert(book.stats().reassigned == 1);
+
+        // una orden que no esta asignada no se puede desasignar
+        assert(book.assign(1, 7));
+        assert(book.pickedUp(1, 7));
+        assert(!book.unassign(1, true));            // ya la retiro: no vuelve atras
+        assert(!book.unassign(999, true));          // no existe
+        std::cout << "  unassign devuelve la orden a la cola sin perderla" << "\n";
+    }
+
+    // --- waitForUnassigned: espera dormido y admit() la despierta
+    {
+        EventLog log("tests/bin/book_wait.log", clock);
+        OrderBook book(10, clock, log);
+
+        // con una orden ya esperando, vuelve enseguida
+        assert(book.admit(makeOrder(1)));
+        auto t0 = std::chrono::steady_clock::now();
+        assert(book.waitForUnassigned(std::chrono::seconds(5)));
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      std::chrono::steady_clock::now() - t0).count();
+        assert(ms < 50);
+
+        // sin ordenes pendientes, espera el plazo SIN consumir CPU
+        assert(book.assign(1, 1));                  // ya no hay ninguna en created
+        const double cpuBefore = 1000.0 * static_cast<double>(std::clock()) / CLOCKS_PER_SEC;
+        t0 = std::chrono::steady_clock::now();
+        assert(book.waitForUnassigned(std::chrono::milliseconds(300)));
+        ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                 std::chrono::steady_clock::now() - t0).count();
+        const double cpuUsed =
+            1000.0 * static_cast<double>(std::clock()) / CLOCKS_PER_SEC - cpuBefore;
+        assert(ms >= 290);                          // espero de verdad
+        std::cout << "  esperar 300 ms sin trabajo consumio " << cpuUsed
+                  << " ms de CPU" << "\n";
+        assert(cpuUsed < 50.0);                     // no gira
+
+        // admit() desde otro hilo la despierta al instante
+        std::thread producer([&book]() {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            book.admit(makeOrder(2));
+        });
+        t0 = std::chrono::steady_clock::now();
+        assert(book.waitForUnassigned(std::chrono::seconds(10)));
+        ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                 std::chrono::steady_clock::now() - t0).count();
+        producer.join();
+        std::cout << "  admit() la desperto en " << ms << " ms (el plazo era 10000)" << "\n";
+        assert(ms < 1000);
+
+        // stopWaiting() la despierta y devuelve false
+        std::thread stopper([&book]() {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            book.stopWaiting();
+        });
+        assert(book.assign(2, 1));                  // que no haya trabajo pendiente
+        assert(!book.waitForUnassigned(std::chrono::seconds(10)));
+        stopper.join();
+        std::cout << "  stopWaiting() la despierta y devuelve false" << "\n";
+    }
+
     // --- LA prueba: 16 hilos admitiendo a la vez contra un limite de 50
     {
         EventLog log("tests/bin/book_burst.log", clock);

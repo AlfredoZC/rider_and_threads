@@ -17,6 +17,8 @@
 #include <optional>
 #include <unordered_map>
 #include <vector>
+#include <chrono>
+#include <condition_variable>
 
 #include "EventLog.h"
 #include "Ids.h"
@@ -62,6 +64,20 @@ public:
     bool assign(OrderId id, CourierId courier);
     bool pickedUp(OrderId id, CourierId courier);
     bool delivered(OrderId id, CourierId courier);
+        // Espera a que haya al menos una orden esperando courier, a que venza el plazo o a
+    // que alguien llame a stopWaiting(). Devuelve false solo en el ultimo caso.
+    //
+    // Existe para que el dispatcher no tenga que preguntar "hay trabajo?" en un bucle:
+    // ese bucle consumiria una CPU entera, que es justo lo que prohibe el §4. Aca espera
+    // dormido y admit() lo despierta.
+    bool waitForUnassigned(std::chrono::milliseconds timeout);
+    void stopWaiting();
+    // Devuelve una orden asignada al estado created, para que vuelva a repartirse.
+    //
+    // countAsReassigned distingue los dos motivos, que el §6 trata distinto: una averia
+    // del courier cuenta en el contador reassigned del resumen y registra el evento; una
+    // oferta rechazada no, porque nadie llego a hacerse cargo de nada.
+    bool unassign(OrderId id, bool countAsReassigned);
 
     // Una copia del estado actual, o nullopt si el id no existe. Copia: quien la recibe
     // trabaja fuera del candado.
@@ -84,6 +100,8 @@ private:
     EventLog& log_;
 
     mutable std::mutex mutex_;
+    std::condition_variable work_;   // avisa que entro una orden sin asignar
+    bool stopWaiting_ = false;       // protegido por mutex_
     std::unordered_map<OrderId, Order> orders_;   // protegido por mutex_
     std::size_t pending_ = 0;                     // protegido por mutex_
     OrderStats stats_;                            // protegido por mutex_
