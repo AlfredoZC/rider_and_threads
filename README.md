@@ -473,8 +473,11 @@ La función **puede devolver cero** cuando el sistema no lo sabe, y en ese caso 
 a mano: un pool de cero trabajadores sería un cuelgue garantizado, porque nadie atendería la
 cola.
 
-Antes cada estimación creaba su propio hilo. Medido con 64 couriers, pasar al pool bajó el
-tiempo de CPU de sistema un 33 % y subió las entregas un 3,5 % (§11).
+Antes cada estimación creaba su propio hilo. Medido con 64 couriers y tres corridas por
+columna, pasar al pool bajó el tiempo de CPU de sistema de 0,85 s a 0,46 s —un 46 %, con los
+rangos disjuntos— y subió las entregas de 526 a 578. Lo que **no** cambió es el pico de hilos
+vivos: 76 contra 75. La predicción de que sin pool habría decenas de hilos por orden era falsa
+(§11).
 
 ### 02 · Datos entregados a un hilo por valor, por referencia y por movimiento
 
@@ -682,30 +685,45 @@ el log por `tools/validate_log.py`. Los datos crudos están en `analysis/`.
 **Qué se cambió.** El courier pedía un lugar en el restaurante al llegar y después esperaba
 ahí a que la comida estuviera lista. Ahora espera la comida primero y pide el lugar después.
 
-**Qué se mantuvo igual.** Semilla 42, 90 minutos simulados, `timeScale: 300`, sin averías.
+**Qué se mantuvo igual.** Semilla 42, 90 minutos simulados, `timeScale: 300`, sin averías, y
+el mismo archivo de configuración en las dos columnas: lo único que cambia es el código. Las
+corridas *antes* se generaron con un binario construido desde el commit `6847c5e`, el padre
+del cambio; `experiments/README.md` explica la procedencia de cada una.
 
-| configuración por defecto (prep 1–5 min, 1–2 slots) | antes | después |
+**Tres corridas por celda, no una.** El entrelazado de los hilos no es reproducible ni con la
+misma semilla, así que una diferencia de tres o cuatro entregas no se distingue del ruido. Lo
+que la tabla informa son las tres corridas de cada celda y su media.
+
+| por defecto (prep 1–4 min, 1–2 lugares) | antes | después |
 |---|---|---|
-| entregadas | 112 | 112 |
-| rechazadas | 290 | 287 |
-| tiempo medio de entrega | 1198 s | 1185 s |
+| entregadas | 108 · 108 · 117 → **111,0** | 112 · 117 · 111 → **113,3** |
+| tiempo medio de entrega | 1191 · 1226 · 1179 → **1199 s** | 1201 · 1164 · 1202 → **1189 s** |
 
-| recurso en disputa (prep 15–20 min, 1 slot) | antes | después |
+| recurso en disputa (prep 15–20 min, 1 lugar) | antes | después |
 |---|---|---|
-| entregadas | 81 | **88** (+8,6 %) |
-| rechazadas | 319 | 313 |
-| tiempo medio de entrega | 1515 s | **1482 s** (−33 s) |
+| entregadas | 80 · 84 · 80 → **81,3** | 85 · 84 · 82 → **83,7** |
+| tiempo medio de entrega | 1541 · 1495 · 1530 → **1522 s** | 1473 · 1494 · 1488 → **1485 s** |
 
-**Conclusión.** El cambio de diseño vale, pero su efecto es condicional. Con la configuración
-por defecto no se nota, y el motivo es más interesante que el número: `prepTimeMs` se cuenta
-desde que la orden **se crea**, y el viaje al restaurante dura cientos de segundos, así que
-cuando el courier llega la comida ya está lista. El cuello de botella del sistema no es la
-cocina sino el viaje. Cuando la preparación domina, retener un lugar sin usarlo sí cuesta
-entregas.
+**Conclusión.** El cambio de diseño vale, pero su efecto es más chico de lo que una sola
+corrida sugería, y conviene decir en qué se nota y en qué no.
 
-Se adoptó el cambio porque el razonamiento no depende de la configuración: un recurso escaso
+En entregas no se puede afirmar nada: los rangos se superponen en las dos configuraciones
+(108–117 contra 111–117 por defecto; 80–84 contra 82–85 en disputa). La diferencia de medias
+es del 2 % y del 3 %, por debajo de la dispersión entre corridas de la misma versión.
+
+Donde sí hay señal es en el **tiempo medio de entrega de la configuración en disputa**: los
+rangos casi no se superponen —1495–1541 antes contra 1473–1494 después— y la media baja 37 s.
+Tiene sentido: ese es el único escenario donde el lugar de retiro es un recurso realmente
+escaso, y retenerlo sin usarlo hace esperar a los demás. Con la configuración por defecto los
+rangos se pisan por completo, y el motivo es más interesante que el número: `prepTimeMs` se
+cuenta desde que la orden **se crea**, y el viaje al restaurante dura cientos de segundos, así
+que cuando el courier llega la comida ya está lista. El cuello de botella no es la cocina sino
+el viaje.
+
+Se adoptó el cambio porque el razonamiento no depende de la medición: un recurso escaso
 retenido sin usar bloquea a otros exactamente igual que uno en uso, y el enunciado permite
-cualquier `prepTimeMs`.
+cualquier `prepTimeMs`. Pero la magnitud que se le atribuía antes —un 8,6 % más de entregas—
+**no se sostiene** al repetir las corridas; era una sola medición dentro del ruido.
 
 ### Experimento 2: dónde ocurre la avería
 
@@ -724,20 +742,52 @@ no se ejercitaba nunca en una corrida real.
 
 ### Experimento 3: devolver a la cola en lugar de traspasar (descartado)
 
-**Qué se cambió.** Que las órdenes que el courier todavía no había retirado volvieran a la cola
-en vez de traspasarse, dejando el todo-o-nada sólo para las que llevan comida.
+**Qué se cambió.** Que las órdenes que el courier todavía no había retirado volvieran a la
+cola en vez de traspasarse, dejando el todo-o-nada sólo para las que llevan comida encima y
+no pueden volver al restaurante.
 
-**Qué se midió.** Averías concretadas en la misma corrida: de **2 a 8**. Exigir que un solo
-compañero se haga cargo de *todas* las órdenes las cancelaba casi siempre.
+**Qué se mantuvo igual.** `exp5_averias_flota_8.json` en las dos columnas: 8 couriers,
+probabilidad de avería 0,6, semilla 42. Esta variante nunca se commiteó —se midió, se vio que
+rompía el §6 y se descartó—, así que para tener el dato crudo se reconstruyó a mano sobre el
+código entregado. El log está en `experiments/exp3_devolver_a_la_cola.log`.
 
-**Conclusión: se revirtió.** El validador del log lo rechazó por dos motivos. `orderReassigned`
-quedaba sin `to`, que el §6 define obligatorio como id del courier receptor; y la orden pasaba
-de `assigned` a `created` sin ningún evento que lo registrara, mientras el §6 exige que todo
-cambio de estado quede en el log.
+| | código entregado | variante descartada |
+|---|---|---|
+| averías concretadas | 2 | **8** |
+| traspasos (`orderReassigned`) | 2 | **0** |
+| órdenes retiradas | 59 | 10 |
+| entregadas | 56 | **10** |
+
+**Conclusión: se revirtió**, y al repetir la medición con los datos crudos aparecieron dos
+razones que la primera vez no se habían visto.
+
+La que ya se conocía es que el log queda inválido. El validador lo rechaza:
+
+```
+linea 1134: o271 pasa de assigned a rejected, que no es legal
+linea 1136: o272 pasa de assigned a rejected, que no es legal
+```
+
+La orden vuelve a la cola sin ningún evento que lo registre, así que para el log sigue
+`assigned`; cuando después vence `acceptTimeoutMs` se la rechaza, y la transición que queda
+escrita es `assigned → rejected`. El §6 abre exigiendo que todo cambio de estado quede
+registrado, y éste no queda.
+
+Las dos nuevas son peores, y son las que hacen que el cambio no tenga ningún atractivo:
+
+- **Los traspasos pasan de 2 a cero.** Si las órdenes no retiradas se devuelven, lo único que
+  queda para traspasar es comida ya retirada, y casi nunca hay. La variante no mejora el
+  camino del `std::scoped_lock`: lo **elimina**. Y ese camino es justo lo que el §4 pide
+  ejercitar.
+- **Las entregas caen de 56 a 10.** Las ocho averías son los ocho couriers de la flota: todos
+  quedan fuera de servicio y el sistema deja de repartir.
+
+Visto así, la métrica que "mejoraba" era un espejismo. Más averías concretadas sólo era mejor
+si servían para ejercitar el traspaso, y lo que hacían era vaciar la flota sin traspasar nada.
 
 Que `orderReassigned` lleve `from` y `to`, los dos ids de courier, implica que las órdenes de
 un averiado van **a otro courier**: no hay evento para "vuelve a la cola" porque esa no es la
-mecánica prevista. Un experimento que mejora una métrica y rompe una regla no es una mejora.
+mecánica prevista.
 
 ### Experimento 4: cantidad de lugares de retiro
 
@@ -767,18 +817,18 @@ de 10⁻⁷. El número no era mala suerte, era una propiedad del diseño que no
 **Qué se midió.** Primero un barrido de la probabilidad con 8 couriers, y después el tamaño de
 la flota con la probabilidad fija.
 
-| `breakdownProbability` (8 couriers) | retiros | averías concretadas |
-|---|---|---|
-| 0,05 | 79 | 0 |
-| 0,20 | 81 | 0 |
-| 0,40 | 70 | 1 |
-| 0,60 | 59 | 2 |
-| 0,80 | 61 | 2 |
+| `breakdownProbability` (8 couriers) | retiros | averías concretadas | datos crudos |
+|---|---|---|---|
+| 0,05 | 77 | 0 | `exp5_barrido_p005` |
+| 0,20 | 80 | 0 | `exp5_barrido_p020` |
+| 0,40 | 68 | 1 | `exp5_barrido_p040` |
+| 0,60 | 57 | 2 | `exp5_barrido_p060` |
+| 0,80 | 54 | 2 | `exp5_barrido_p080` |
 
-| flota (`breakdownProbability` 0,6) | retiros | averías concretadas |
-|---|---|---|
-| 8 couriers | 60 | 2 |
-| 16 couriers | 101 | **5** |
+| flota (`breakdownProbability` 0,6) | retiros | averías concretadas | datos crudos |
+|---|---|---|---|
+| 8 couriers | 60 | 2 | `exp5_averias_flota_8` |
+| 16 couriers | 101 | **5** | `exp5_averias_flota_16` |
 
 **Conclusión.** La avería sorteada y la avería concretada no son lo mismo. El traspaso es
 todo-o-nada: si ningún compañero tiene lugar para **todas** las órdenes del averiado, el sorteo
@@ -797,28 +847,44 @@ del §12.
 
 ### Experimento 6: un pool acotado en lugar de un hilo por estimación
 
-**Qué se cambió.** Las estimaciones se lanzaban con `std::async(std::launch::async, ...)`, que
-crea un hilo del sistema operativo por tarea. Ahora las atiende un `QuotePool` con tantos
+**Qué se cambió.** Las estimaciones se lanzaban con `std::async(std::launch::async, ...)`,
+que crea un hilo del sistema operativo por tarea. Ahora las atiende un `QuotePool` con tantos
 trabajadores como `std::thread::hardware_concurrency()`, creados una sola vez.
 
-**Qué se mantuvo igual.** Semilla 42, 64 couriers (`experiments/exp6_pool_64_couriers.json`), que es
-la flota donde el costo por tarea debería notarse.
+**Qué se mantuvo igual.** `exp6_pool_64_couriers.json` en las dos columnas: 64 couriers,
+semilla 42. Es la flota donde el costo por tarea debería notarse. Las corridas *sin pool* se
+generaron con un binario construido desde el commit `d912b69`, donde el `QuotePool` ya existe
+pero el dispatcher todavía usa `std::async`. Tres corridas por columna, alternadas, porque lo
+que se compara es tiempo de CPU y conviene que las dos vean la misma máquina.
 
-| 64 couriers | antes | después |
+| 64 couriers | sin pool | con pool |
 |---|---|---|
-| hilos vivos en el pico | 69 | 75 |
-| tiempo de CPU de sistema | — | **−33 %** |
-| entregadas | — | **+3,5 %** |
+| pico de hilos vivos | 75 · 78 · 75 → **76,0** | 75 · 75 · 75 → **75,0** |
+| CPU de sistema | 1,13 · 0,70 · 0,72 → **0,85 s** | 0,49 · 0,42 · 0,48 → **0,46 s** (−46 %) |
+| CPU de usuario | 5,84 · 7,09 · 7,81 → **6,91 s** | 8,84 · 8,16 · 8,44 → **8,48 s** |
+| entregadas | 474 · 530 · 573 → **526** | 573 · 580 · 581 → **578** |
 
-**Conclusión, con una corrección.** La predicción era que con 64 couriers habría del orden de 64
-hilos vivos por orden y el sistema se ahogaría creándolos. Medido, el pico de hilos fue 69 antes
-y 75 después: **la predicción era falsa**. Las estimaciones duran microsegundos, así que los
-hilos nacen y mueren antes de acumularse.
+**Conclusión, con una predicción refutada y una sorpresa.**
 
-Lo que el pool sí mejora es el costo de crearlos y destruirlos, que es lo que explica el 33 %
-menos de CPU de sistema. El beneficio real es acotar los recursos y reutilizar el `Router` de
-cada trabajador —la memoria de trabajo de Dijkstra, que antes se construía una vez por
-estimación—, no evitar un colapso que no iba a ocurrir.
+La predicción era que con 64 couriers habría del orden de 64 hilos vivos por orden y el
+sistema se ahogaría creándolos. Medido, **el pico de hilos es el mismo con pool y sin pool**:
+76 contra 75. La predicción era falsa, y el motivo es que las estimaciones duran microsegundos,
+así que los hilos nacen y mueren antes de poder acumularse.
+
+Lo que el pool sí mejora, y de forma clara, es el **tiempo de CPU de sistema**: 0,85 s contra
+0,46 s, con los rangos disjuntos (0,70–1,13 contra 0,42–0,49). Ahí es donde vive el costo de
+pedirle al núcleo un hilo nuevo y devolverlo, miles de veces. Las entregas suben de 526 a 578,
+aunque de las dos cifras ésta es la menos firme: la columna sin pool va de 474 a 573, un rango
+ancho.
+
+La sorpresa es que el **CPU de usuario sube** con el pool, de 6,91 s a 8,48 s. No es una
+regresión: el programa entrega un 10 % más de órdenes, y cada entrega activa se dibuja en la
+ventana treinta veces por segundo. Se paga más trabajo de usuario porque se hace más trabajo
+útil.
+
+El beneficio real del pool, entonces, es acotar los recursos y reutilizar el `Router` de cada
+trabajador —la memoria de trabajo de Dijkstra, que antes se construía una vez por estimación—,
+no evitar un colapso que no iba a ocurrir.
 
 ## 12. Análisis con herramientas
 
@@ -928,7 +994,8 @@ de líneas que coinciden.
 **La máquina de estados está reimplementada en Python**, así que no comparte código con la de
 C++ y un agujero en una no se refleja en la otra.
 
-Encontró tres defectos reales que ni las pruebas unitarias ni la inspección habían detectado:
+Encontró cuatro defectos reales que ni las pruebas unitarias ni la inspección habían
+detectado, y además es lo que rechazó la variante del experimento 3:
 
 1. El resumen informaba siempre `pending: 0`. `markRemainingAsPending()` deja las órdenes en un
    estado final, así que el contador de vivas bajaba a cero justo antes de que `stats()` lo
@@ -936,8 +1003,7 @@ Encontró tres defectos reales que ni las pruebas unitarias ni la inspección ha
    prueba y el código se confirmaban entre sí.
 2. Las órdenes rechazadas por cola llena no emitían `orderCreated`: el resumen decía 86 creadas
    y el log tenía 68.
-3. El experimento 3, descrito arriba.
-4. El dispatcher registraba la asignación en el libro **antes** de entregarle la orden al
+3. El dispatcher registraba la asignación en el libro **antes** de entregarle la orden al
    courier. Entre un paso y el otro pasan hasta `quoteTimeoutMs`, y en ese rato el courier
    puede llenarse o averiarse: la entrega fallaba con `orderAssigned` ya escrito, la orden
    volvía a la cola, y el §6 no tiene ningún evento para ese paso atrás. El log mostraba la
@@ -947,6 +1013,20 @@ Encontró tres defectos reales que ni las pruebas unitarias ni la inspección ha
    la corrida con 16 couriers y averías frecuentes: ni las 17 pruebas unitarias ni
    ThreadSanitizer la vieron, porque no era una carrera de datos sino una secuencia de
    estados inválida.
+4. La variante del experimento 3 dejaba el log con una orden pasando de `assigned` a
+   `rejected`, porque volvía a la cola sin ningún evento que lo registrara y después vencía
+   su plazo de aceptación.
+
+### Una magnitud que no se sostuvo al repetir las corridas
+
+El experimento 1 informaba un 8,6 % más de entregas con la configuración en disputa. Al
+generar los datos crudos con tres corridas por celda, ese efecto **no aparece**: los rangos de
+entregas se superponen y la diferencia de medias queda en el 3 %, por debajo de la dispersión
+entre corridas de la misma versión. Lo que sí resiste la repetición es el tiempo medio de
+entrega, con rangos casi disjuntos y 37 s de mejora.
+
+La lección es sobre el método, no sobre el resultado: con el entrelazado no reproducible, una
+sola corrida por celda no alcanza para sostener una diferencia de pocos puntos porcentuales.
 
 ## 13. Limitaciones conocidas
 

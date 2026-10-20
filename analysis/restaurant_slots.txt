@@ -73,3 +73,41 @@ La mejora es real pero condicional: solo se nota cuando la preparacion es larga 
 slots escasos. Se deja igual porque el razonamiento no depende de la configuracion
 -retener un recurso escaso sin usarlo nunca es correcto- y porque el enunciado
 permite cualquier prepTimeMs.
+
+
+=== Repeticion con datos crudos guardados (experimento 1 del README) ===
+
+La medicion de arriba es de una sola corrida por celda. Para los datos crudos que pide el
+§13 se repitio con TRES corridas por celda, porque el entrelazado no es reproducible y una
+diferencia de tres o cuatro entregas no se distingue del ruido.
+
+El binario "antes" se construyo desde el commit 6847c5e, el padre del cambio. Las dos
+columnas usan el MISMO archivo de configuracion: lo unico que cambia es el codigo. Logs y
+resumenes en experiments/exp1_*.
+
+  por defecto (prep 1-4 min, 1-2 lugares)      antes                 despues
+    entregadas ............................... 108 108 117 -> 111.0  112 117 111 -> 113.3
+    tiempo medio de entrega .................. 1191 1226 1179 ->     1201 1164 1202 ->
+                                               1199 s                1189 s
+
+  recurso en disputa (prep 15-20 min, 1 lugar) antes                 despues
+    entregadas ............................... 80 84 80 -> 81.3      85 84 82 -> 83.7
+    tiempo medio de entrega .................. 1541 1495 1530 ->     1473 1494 1488 ->
+                                               1522 s                1485 s
+
+Que cambia respecto de la lectura anterior:
+
+  En ENTREGAS no se puede afirmar nada. Los rangos se superponen en las dos
+  configuraciones (108-117 contra 111-117 por defecto; 80-84 contra 82-85 en disputa) y la
+  diferencia de medias es del 2 % y del 3 %, por debajo de la dispersion entre corridas de
+  la misma version. El 8,6 % que informaba la medicion de una sola corrida NO se sostiene.
+
+  En TIEMPO MEDIO de la configuracion en disputa si hay senal: los rangos casi no se
+  superponen, 1495-1541 antes contra 1473-1494 despues, y la media baja 37 s. Es el unico
+  escenario donde el lugar de retiro es un recurso realmente escaso.
+
+El cambio se adopto igual, porque el razonamiento no depende de la medicion: un recurso
+escaso retenido sin usar bloquea a otros exactamente igual que uno en uso, y el enunciado
+permite cualquier prepTimeMs. Pero la magnitud que se le atribuia era ruido.
+
+Las seis corridas pasaron el validador: TODO CORRECTO en las seis.
