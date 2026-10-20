@@ -191,6 +191,22 @@ PENDIENTE. Decisiones que el enunciado deja abiertas y que se documentan aquí:
 - Tiempos simulados fijos (entrega en el restaurante, entrega al cliente, reparación).
 - Qué es reproducible con una misma `seed` y qué depende del planificador del sistema operativo.
 
+## 6b. La ventana
+
+![La simulación en marcha](docs/ventana.png)
+
+Cada punto es un courier, dibujado en su posición real sobre la calle que recorre, y
+esa posición avanza de forma continua cuadro a cuadro. Los colores distinguen los
+estados: gris libre, amarillo yendo al restaurante, **naranja esperando turno en la
+puerta**, verde entregando, rojo averiado. Las líneas violetas unen a cada courier con
+la puerta del cliente al que está yendo.
+
+El naranja no es decorativo: ver varios juntos en un restaurante es la exclusión mutua
+de los `pickupSlots` ocurriendo a la vista.
+
+La capa del grafo de calles está oculta por defecto, porque con 1027 calles y sus
+flechas tapa el mapa. La tecla `G` la muestra cuando hace falta inspeccionar la red.
+
 ## 7. Esquema del programa: hilos y canales
 
 Estado: lo marcado **[hecho]** está implementado y probado; **[plan]** es diseño todavía no

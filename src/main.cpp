@@ -187,12 +187,16 @@ cv::Point2f courierPixel(const Courier& view, const PixelMap& px, std::int64_t n
 }
 
 // Las entregas activas: una linea del courier a la puerta del cliente (§6.4).
+//
+// Recibe las copias ya tomadas. Antes esta funcion y drawCouriers pedian cada una su
+// propio snapshot(), asi que cada cuadro tomaba y soltaba el candado de cada courier dos
+// veces: 16 veces por cuadro con ocho couriers, 480 por segundo. Y peor, las dos podian
+// ver estados distintos del mismo courier dentro del mismo cuadro, dibujando la linea
+// desde una posicion y el punto en otra.
 void drawActiveDeliveries(cv::Mat& img, const PixelMap& px, const SimContext& ctx,
-                          const std::vector<std::unique_ptr<CourierActor>>& fleet,
-                          std::int64_t nowMs) {
+                          const std::vector<Courier>& views, std::int64_t nowMs) {
     const cv::Scalar violeta(200, 80, 200);
-    for (const auto& actor : fleet) {
-        const Courier view = actor->snapshot();   // copia bajo candado
+    for (const Courier& view : views) {
         if (view.bag.empty()) {
             continue;
         }
@@ -213,16 +217,15 @@ void drawActiveDeliveries(cv::Mat& img, const PixelMap& px, const SimContext& ct
     }
 }
 
-void drawCouriers(cv::Mat& img, const PixelMap& px,
-                  const std::vector<std::unique_ptr<CourierActor>>& fleet,
+void drawCouriers(cv::Mat& img, const PixelMap& px, const std::vector<Courier>& views,
                   std::int64_t nowMs) {
-    const std::size_t total = fleet.size();
+    const std::size_t total = views.size();
     for (std::size_t i = 0; i < total; ++i) {
-        const Courier view = fleet[i]->snapshot();
+        const Courier& view = views[i];
         const cv::Point2f pos = courierPixel(view, px, nowMs);
 
-        // Los couriers que estan quietos en el mismo nodo se superpondrian, asi que se
-        // abren en abanico. Solo afecta al dibujo: el dato sigue siendo el nodo.
+        // Los couriers quietos en el mismo nodo se superpondrian, asi que se abren en
+        // abanico. Solo afecta al dibujo: el dato sigue siendo el nodo.
         const double angle = 2.0 * 3.14159265358979323846 * static_cast<double>(i) /
                              static_cast<double>(total == 0 ? 1 : total);
         const cv::Point center(cvRound(pos.x + 9.0 * std::cos(angle)),
@@ -233,7 +236,6 @@ void drawCouriers(cv::Mat& img, const PixelMap& px,
     }
 }
 
-// Los contadores en vivo y la leyenda de colores (§6.4).
 void drawPanel(cv::Mat& img, const OrderStats& stats, std::int64_t nowMs,
                const std::string& attribution) {
     const int x = 10;
@@ -336,7 +338,10 @@ int main(int argc, char** argv) {
     const std::string windowName = "Equipetrol Delivery";
     const int kEscKey = 27;
     const int kFrameMs = 33;
-    bool showGraph = true;
+    // El grafo arranca OCULTO. Con 1027 calles y sus flechas, la capa tapa el mapa
+    // y los puntos cuestan de distinguir, que es justo lo que el §2 quiere ver. La
+    // tecla G lo muestra cuando hace falta inspeccionar la red de calles.
+    bool showGraph = false;
 
     // El grafo se construye una vez, antes de cualquier hilo, y después es inmutable:
     // por eso lo comparten todos los couriers sin ningún candado.
@@ -398,14 +403,24 @@ int main(int argc, char** argv) {
     const std::int64_t durationMs = cfg.durationS * 1000;
 
     cv::Mat frame;
+    std::vector<Courier> views;   // se reutiliza: no pide memoria por cuadro
+    views.reserve(fleet.size());
     while (true) {
         // copyTo y no clone(): reutiliza el buffer de frame en vez de pedir 4 MB al
         // sistema treinta veces por segundo. Por eso frame se declara FUERA del bucle.
         (showGraph ? withGraph : image).copyTo(frame);
 
         const std::int64_t nowMs = clock.nowMs();
-        drawActiveDeliveries(frame, px, ctx, fleet, nowMs);
-        drawCouriers(frame, px, fleet, nowMs);
+
+        // Una sola copia por courier y por cuadro. Las dos funciones de dibujo la
+        // comparten, asi que ven el mismo instante y el candado de cada courier se
+        // toma una vez en vez de dos.
+        views.clear();
+        for (const auto& actor : fleet) {
+            views.push_back(actor->snapshot());
+        }
+        drawActiveDeliveries(frame, px, ctx, views, nowMs);
+        drawCouriers(frame, px, views, nowMs);
         drawPanel(frame, book.stats(), nowMs, cfg.attribution);
         cv::imshow(windowName, frame);
         const int key = cv::waitKey(kFrameMs);
