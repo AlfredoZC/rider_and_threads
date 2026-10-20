@@ -60,7 +60,12 @@ int main() {
         const SimClock clock(1.0);
         EventLog log("tests/bin/brk_pool.log", clock);
         OrderBook book(50, clock, log);
-        const SimContext ctx{graph, clock, log, book};
+        Restaurants restaurants;
+        for (const RestaurantConfig& r : cfg.restaurants) {
+            restaurants.emplace(r.id,
+                                std::make_unique<Restaurant>(r.id, r.pickupSlots));
+        }
+        const SimContext ctx{graph, clock, log, book, restaurants};
 
         std::vector<std::unique_ptr<CourierActor>> fleet;
         fleet.push_back(std::make_unique<CourierActor>(1, cfg.startNode, 3, ctx));
@@ -91,7 +96,12 @@ int main() {
         const SimClock clock(1.0);
         EventLog log("tests/bin/brk_food.log", clock);
         OrderBook book(50, clock, log);
-        const SimContext ctx{graph, clock, log, book};
+        Restaurants restaurants;
+        for (const RestaurantConfig& r : cfg.restaurants) {
+            restaurants.emplace(r.id,
+                                std::make_unique<Restaurant>(r.id, r.pickupSlots));
+        }
+        const SimContext ctx{graph, clock, log, book, restaurants};
 
         std::vector<std::unique_ptr<CourierActor>> fleet;
         fleet.push_back(std::make_unique<CourierActor>(1, cfg.startNode, 3, ctx));
@@ -127,7 +137,12 @@ int main() {
         const SimClock clock(1.0);
         EventLog log("tests/bin/brk_allornothing.log", clock);
         OrderBook book(50, clock, log);
-        const SimContext ctx{graph, clock, log, book};
+        Restaurants restaurants;
+        for (const RestaurantConfig& r : cfg.restaurants) {
+            restaurants.emplace(r.id,
+                                std::make_unique<Restaurant>(r.id, r.pickupSlots));
+        }
+        const SimContext ctx{graph, clock, log, book, restaurants};
 
         std::vector<std::unique_ptr<CourierActor>> fleet;
         fleet.push_back(std::make_unique<CourierActor>(1, cfg.startNode, 3, ctx));
@@ -163,7 +178,12 @@ int main() {
             const SimClock clock(1.0);
             EventLog log("tests/bin/brk_cross.log", clock);
             OrderBook book(50, clock, log);
-            const SimContext ctx{graph, clock, log, book};
+            Restaurants restaurants;
+            for (const RestaurantConfig& r : cfg.restaurants) {
+                restaurants.emplace(r.id,
+                                    std::make_unique<Restaurant>(r.id, r.pickupSlots));
+            }
+            const SimContext ctx{graph, clock, log, book, restaurants};
 
             std::vector<std::unique_ptr<CourierActor>> fleet;
             fleet.push_back(std::make_unique<CourierActor>(1, cfg.startNode, 4, ctx));
