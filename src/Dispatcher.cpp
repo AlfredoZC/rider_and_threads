@@ -130,16 +130,29 @@ void Dispatcher::dispatchOne(OrderId orderId) {
         return;   // todas inalcanzables o tardias: se reintenta en la vuelta siguiente
     }
 
-    // --- asignar y ofrecer. assign() vuelve a validar dentro de su candado, porque entre
-    // que miramos la orden y ahora pasaron hasta quoteTimeoutMs.
-    if (!ctx_.book.assign(orderId, fleet_[best]->id())) {
+    // --- reservar, registrar, confirmar.
+    //
+    // El orden importa. Registrar primero y entregar despues parecia lo natural, pero
+    // deja un agujero: si el courier se lleno o se averio en los hasta quoteTimeoutMs
+    // que duraron las estimaciones, la entrega falla con orderAssigned ya escrito, y la
+    // orden tiene que volver a la cola. El §6 no tiene ningun evento para ese paso
+    // atras, asi que el log muestra la orden pasando de assigned a assigned la proxima
+    // vez que se asigne, que no es una transicion legal. Lo encontro el validador en una
+    // corrida con 16 couriers y averias frecuentes: una orden de 1531.
+    //
+    // Pidiendo lugar primero, el unico camino de salida que queda sin registrar nada es
+    // el de la reserva rechazada, y la orden simplemente espera la vuelta siguiente.
+    CourierActor& elegido = *fleet_[best];
+    if (!elegido.reserve(order)) {
+        return;   // se lleno o se averio mientras estimabamos: nada se registro
+    }
+    // assign() vuelve a validar dentro de su candado: la orden pudo haber sido rechazada
+    // o retirada mientras estimabamos.
+    if (!ctx_.book.assign(orderId, elegido.id())) {
+        elegido.cancelReservation();
         return;
     }
-    if (!fleet_[best]->offer(order)) {
-        // El courier se lleno mientras estimabamos: la orden vuelve a la cola. No cuenta
-        // como reasignacion, que el §6 reserva para las averias.
-        ctx_.book.unassign(orderId, false);
-    }
+    elegido.commitReservation(order);
 }
 
 void Dispatcher::sweepLateQuotes() {

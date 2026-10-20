@@ -3,7 +3,7 @@
 // el hilo principal les pide terminar. Tecla G: mostrar/ocultar el grafo. ESC o cerrar la
 // ventana: salir.
 //
-// Uso: delivery_sim <config.json> [--log <path>]
+// Uso: delivery_sim <config.json> [--log <path>] [--no-window]
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -62,18 +62,27 @@ extern "C" void onStopSignal(int) { g_stopSignal.store(true); }
 struct Arguments {
     std::string configPath;
     std::string logPath = "events.log";
+    // Corre la simulacion completa, armando cada cuadro, pero sin abrir la ventana.
+    // Existe por ThreadSanitizer: Qt lanza sus propios hilos y habla con el escritorio
+    // por dbus y glib, y esas dos vienen sin simbolos, asi que ensucian el reporte con
+    // carreras ajenas que ni se pueden nombrar para suprimirlas. Sin ventana, lo que
+    // queda bajo analisis es exactamente la concurrencia de este programa.
+    bool noWindow = false;
 };
 
 // Devuelve false (y explica en stderr) si los argumentos no son válidos.
 bool parseArguments(int argc, char** argv, Arguments& args) {
     if (argc < 2) {
-        std::cerr << "Uso: " << argv[0] << " <config.json> [--log <path>]\n";
+        std::cerr << "Uso: " << argv[0]
+                  << " <config.json> [--log <path>] [--no-window]\n";
         return false;
     }
     args.configPath = argv[1];
     for (int i = 2; i < argc; ++i) {
         const std::string flag = argv[i];
-        if (flag == "--log" && i + 1 < argc) {
+        if (flag == "--no-window") {
+            args.noWindow = true;
+        } else if (flag == "--log" && i + 1 < argc) {
             args.logPath = argv[++i];
         } else if (flag == "--log") {
             std::cerr << "Error: --log necesita una ruta\n";
@@ -393,7 +402,9 @@ int main(int argc, char** argv) {
 
     std::thread generatorThread(&OrderGenerator::run, &generator);
 
-    cv::namedWindow(windowName, cv::WINDOW_AUTOSIZE);
+    if (!args.noWindow) {
+        cv::namedWindow(windowName, cv::WINDOW_AUTOSIZE);
+    }
     std::cout << "Simulation has started..." << std::endl;
 
     std::signal(SIGINT, onStopSignal);
@@ -422,16 +433,23 @@ int main(int argc, char** argv) {
         drawActiveDeliveries(frame, px, ctx, views, nowMs);
         drawCouriers(frame, px, views, nowMs);
         drawPanel(frame, book.stats(), nowMs, cfg.attribution);
-        cv::imshow(windowName, frame);
-        const int key = cv::waitKey(kFrameMs);
-        if (key == kEscKey) {
-            break;
-        }
-        if (key == 'g' || key == 'G') {
-            showGraph = !showGraph;
-        }
-        if (cv::getWindowProperty(windowName, cv::WND_PROP_VISIBLE) < 1) {
-            break;
+        if (args.noWindow) {
+            // El cuadro se armo igual -de eso se trata: el codigo de dibujo tambien
+            // queda bajo analisis- pero no se muestra. La espera reemplaza a waitKey
+            // para que el bucle mantenga el mismo ritmo de treinta cuadros por segundo.
+            std::this_thread::sleep_for(std::chrono::milliseconds(kFrameMs));
+        } else {
+            cv::imshow(windowName, frame);
+            const int key = cv::waitKey(kFrameMs);
+            if (key == kEscKey) {
+                break;
+            }
+            if (key == 'g' || key == 'G') {
+                showGraph = !showGraph;
+            }
+            if (cv::getWindowProperty(windowName, cv::WND_PROP_VISIBLE) < 1) {
+                break;
+            }
         }
         // Las dos condiciones de corte del §7. La señal se nota en un cuadro como
         // mucho, o sea 33 ms: muy por debajo de los 5 segundos que da el enunciado.

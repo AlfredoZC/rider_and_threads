@@ -45,6 +45,25 @@ public:
     // pasarse de bagCapacity.
     bool offer(const Order& order);
 
+    // Reserva en dos fases, para el dispatcher.
+    //
+    // Hace falta porque registrar la asignacion y entregarle la orden al courier son dos
+    // pasos, y entre uno y otro el courier puede llenarse o averiarse. Si el libro ya
+    // registro orderAssigned y despues la entrega falla, la orden tiene que volver a la
+    // cola, y el §6 no tiene ningun evento que represente ese paso atras: el log quedaria
+    // con la orden pasando de assigned a assigned, que no es una transicion legal.
+    //
+    // Con la reserva, el orden se invierte: primero se pide lugar al courier, despues se
+    // registra en el libro, y solo si las dos cosas salen bien se confirma. Si algo falla
+    // antes del registro, no se escribio nada y el log no tiene de que quejarse.
+    //
+    // Los candados nunca se toman a la vez: reserve y commitReservation toman el del
+    // courier y lo sueltan, y entre medio el libro toma el suyo. La jerarquia queda
+    // intacta.
+    bool reserve(const Order& order);
+    void commitReservation(const Order& order);
+    void cancelReservation();
+
     // Una copia del estado, tomada bajo candado. El dibujo y las estimaciones trabajan
     // sobre la copia, sin sostener el candado mientras calculan.
     Courier snapshot() const;
@@ -95,6 +114,11 @@ private:
     std::mt19937 rng_;             // propio de este hilo: no se comparte
     const std::vector<std::unique_ptr<CourierActor>>* fleet_ = nullptr;
 
+    bool hasRoomLocked() const;
+
     Courier state_;                // protegido por mutex_
     bool stopRequested_ = false;   // protegido por mutex_
+    // Lugares apartados y todavia sin confirmar. Cuentan como ocupados para que dos
+    // reservas simultaneas no se pasen de bagCapacity.
+    int reserved_ = 0;             // protegido por mutex_
 };

@@ -8,9 +8,6 @@ sobre una imagen real de OpenStreetMap.
 > Mapa y datos de calles: **© OpenStreetMap contributors**. Los datos de OpenStreetMap están disponibles
 > bajo la [Open Database License (ODbL)](https://www.openstreetmap.org/copyright).
 
-> **Estado del documento:** en construcción. Las secciones marcadas con `PENDIENTE` se completan a medida
-> que avanza la implementación. El esquema y el mapa de conceptos deben coincidir con el código final.
-
 ---
 
 ## Contenido
@@ -68,6 +65,7 @@ cmake .. && make
 |-----------|-------------|
 | `<config.json>` (obligatorio) | Ruta al archivo de configuración |
 | `--log <path>` (opcional) | Escribe el log de eventos en `<path>` en vez de `events.log` |
+| `--no-window` (opcional) | Corre la simulación sin abrir la ventana. Ver más abajo |
 
 Builds instrumentados:
 
@@ -88,6 +86,19 @@ mkdir build-asan && cd build-asan && cmake -DENABLE_ASAN=ON .. && make   # Addre
 
 La simulación termina al cumplirse `simulation.durationS` segundos simulados, o al recibir `SIGINT` (Ctrl-C)
 o `SIGTERM`. En ambos casos imprime el resumen y sale con código 0.
+
+### La bandera `--no-window`
+
+```
+./delivery_sim config/equipetrol.json --log events.log --no-window
+```
+
+Corre la simulación completa —se arma cada cuadro igual, así que el código de dibujo sigue
+ejecutándose— pero no abre la ventana. Existe por el análisis con ThreadSanitizer del §12:
+las librerías con las que OpenCV abre la ventana tienen carreras propias que ensucian el
+reporte y que no se pueden suprimir por nombre porque vienen sin símbolos. Sin ventana, lo
+que queda bajo análisis es exactamente la concurrencia de este programa. Por defecto la
+ventana se abre, que es lo que pide el §2 del enunciado.
 
 ## 3. Entrada y salida
 
@@ -111,6 +122,8 @@ config/equipetrol.json    configuración oficial
 config/tests/             escenarios de prueba (válidos e inválidos)
 data/equipetrol.png       imagen de OpenStreetMap usada de fondo
 src/                      código fuente C++17
+tests/                    17 programas de prueba y run.sh, que los compila y ejecuta
+docs/                     informe técnico y capturas
 third_party/nlohmann/     librería JSON (un solo header)
 tools/                    scripts de apoyo: validación del log, corrida de escenarios, extracción OSM
 experiments/              datos crudos de los experimentos (configs, logs, resúmenes)
@@ -181,15 +194,71 @@ Decisiones del modelado:
 
 ## 6. Decisiones de diseño
 
-PENDIENTE. Decisiones que el enunciado deja abiertas y que se documentan aquí:
+El enunciado fija el qué y deja abierto el cómo en varios puntos. Acá está cada decisión,
+con la razón y lo que se descartó.
 
-- Generación de órdenes: distribución de los intervalos y regla de las ráfagas.
-- Elección del destino de entrega y definición de `unreachable`.
-- Estimación del tiempo de entrega (ETA) usada por el dispatcher y número de candidatos cotizados.
-- Qué órdenes se transfieren en una avería (asignadas y/o recogidas), qué pasa si ningún courier tiene espacio
-  y si la avería es permanente o se repara.
-- Tiempos simulados fijos (entrega en el restaurante, entrega al cliente, reparación).
-- Qué es reproducible con una misma `seed` y qué depende del planificador del sistema operativo.
+### Cómo llegan las órdenes
+
+Los intervalos entre llegadas salen de una **distribución exponencial** de media
+`orders.meanIntervalMs`, y no de un intervalo fijo. Con intervalos iguales la cola casi
+nunca se acumula: cada orden encuentra el sistema en el mismo estado que la anterior, y
+`maxPending` no se alcanza jamás. La exponencial es la que corresponde a llegadas
+independientes, y produce los momentos de aglomeración donde la concurrencia se nota.
+
+Encima de eso, **una de cada diez llegadas es una ráfaga** de entre 2 y `orders.burstMax`
+órdenes creadas de golpe. Esa es la prueba de fuego del `admit()` del libro: varias órdenes
+compitiendo por los últimos lugares de `maxPending` en el mismo instante.
+
+### Destino de la entrega, y qué significa inalcanzable
+
+El restaurante de cada orden se sortea entre los configurados; el destino, uniformemente
+entre los 668 nodos del mapa, **excluyendo el nodo del propio restaurante** (una entrega
+en la puerta del local no es una entrega).
+
+Una orden es `unreachable` cuando el grafo no tiene camino, no cuando el camino es largo.
+Como las calles de sentido único se modelan como aristas dirigidas, hay pares de nodos sin
+camino de ida aunque lo haya de vuelta: el rechazo `unreachable` existe por eso, y lo
+decide Dijkstra, no un umbral.
+
+### La estimación que usa el dispatcher
+
+`estimateDeliveryMs` suma dos caminos más corto —del courier al restaurante y del
+restaurante al cliente— y **no** los suma a ciegas con el tiempo de preparación: toma el
+mayor entre el viaje al restaurante y `prepMs`, porque un courier que llega antes espera.
+Sumarlos castigaría al courier cercano, que es justo el que conviene elegir.
+
+Se cotiza a **todos** los couriers con lugar en la bolsa y sin avería, no a una muestra. Con
+la flota de ejemplo son 8 estimaciones por orden; son independientes entre sí y es
+precisamente por eso que van en paralelo.
+
+### Qué pasa en una avería
+
+La avería es **permanente**: un courier averiado no se repara y queda fuera de servicio
+hasta el final de la corrida. No hay un tiempo de reparación configurable porque el §6 no
+tiene un evento que represente el regreso, y un cambio de estado sin evento rompe la
+validación del log.
+
+El traspaso es **todo-o-nada y a un solo compañero**: o las órdenes del averiado entran
+completas en la bolsa de un mismo courier, o la avería no ocurre. El §6 lo impone de
+hecho: `orderReassigned` lleva `from` y `to` obligatorios, los dos ids de courier. Si
+ninguno tiene lugar para todas, el sorteo se descarta y el courier sigue trabajando. Eso
+tiene una consecuencia medible que está en el experimento 5: con la flota saturada las
+averías casi no se concretan.
+
+Devolver las órdenes a la cola se probó y se descartó: está en el experimento 3.
+
+### Qué es reproducible y qué no
+
+Con la misma `seed` son reproducibles **las decisiones de azar**: los intervalos entre
+llegadas, el tamaño de las ráfagas, los restaurantes, los destinos, los tiempos de
+preparación y los sorteos de avería. Cada courier deriva su propia corriente de la semilla
+mezclándola con su id, así que agregar un courier no corre el azar de los demás.
+
+No es reproducible **el entrelazado**: qué courier gana una orden, cuál llega primero a la
+ventanilla, en qué orden salen las líneas del log. Eso lo decide el planificador del
+sistema operativo, y dos corridas con la misma semilla dan resúmenes distintos. Es una
+propiedad del programa, no un defecto: un simulador concurrente cuyo entrelazado fuera
+reproducible no estaría ejercitando la concurrencia.
 
 ## 6b. La ventana
 
@@ -209,32 +278,33 @@ flechas tapa el mapa. La tecla `G` la muestra cuando hace falta inspeccionar la 
 
 ## 7. Esquema del programa: hilos y canales
 
-Estado: lo marcado **[hecho]** está implementado y probado; **[plan]** es diseño todavía no
-escrito. Se actualiza en cada avance.
+Todo lo que aparece acá está implementado y probado. Las once filas de hilos y los diez
+canales son los del código final.
 
 ### Flujo de una orden, de punta a punta
 
 ```
-GENERADOR   [hecho]   espera un intervalo aleatorio (wait_for, 0% CPU)
-                      crea la orden y llama a OrderBook.admit()
+GENERADOR   espera un intervalo exponencial (wait_for, 0% CPU)
+            crea la orden y llama a OrderBook.admit()
                               |
                               |  si pending_ == maxPending -> orderRejected(queueFull)
                               v
-            [plan]    despierta al dispatcher
+            despierta al dispatcher
                               |
-DISPATCHER  [plan]    espera en su cv (0% CPU) <-------------------+
-                      toma las ordenes sin asignar
-                      pide una estimacion POR COURIER, en paralelo
-                        - un std::future por candidato
-                        - plazo de quoteTimeoutMs REALES
-                        - las que llegan tarde se descartan
-                        - si una lanza, la excepcion llega en get() y no tumba nada
-                      elige el mejor tiempo estimado
-                      OrderBook.assign(orden, courier)   <- candado: microsegundos
-                      courier.offer(orden)               -> despierta al courier
+DISPATCHER  espera en el libro, con plazo (0% CPU) <---------------+
+            toma las ordenes sin asignar
+            encola una estimacion POR COURIER en el QuotePool
+              - un promise/future por candidato
+              - plazo comun de quoteTimeoutMs REALES
+              - las que llegan tarde se mudan a una lista, no se destruyen
+              - si una lanza, la excepcion llega en get() y no tumba nada
+            elige el mejor tiempo estimado
+            courier.reserve(orden)             <- candado: microsegundos
+            OrderBook.assign(orden, courier)   <- candado: microsegundos
+            courier.commitReservation(orden)   -> despierta al courier
                               |
-COURIER     [hecho]   espera en su cv (0% CPU) <-------------------+
-            [plan]    calcula su ruta con SU PROPIO Router
+COURIER     espera en su cv (0% CPU) <-----------------------------+
+            calcula su ruta con SU PROPIO Router
                       viaja tramo a tramo                <- SIN candados, segundos
                       llega al restaurante -> pickupStarted
                       espera a que la comida este lista si llego antes
@@ -262,23 +332,26 @@ comprobación ocurre dentro del candado del `OrderBook`, que dura microsegundos.
 
 ### Hilos de ejecución
 
-| Hilo | Cantidad | Sobre qué hace loop | Cómo espera | Estado |
-|------|----------|---------------------|-------------|--------|
-| main / render | 1 | Dibuja un frame y revisa teclado y señal | `cv::waitKey` (ritmo de frames) | [hecho] parcial |
-| `OrderGenerator` | 1 | Espera un intervalo exponencial y crea 1..`burstMax` órdenes | `cv.wait_for` con predicado, interrumpible | [hecho] |
-| `Dispatcher` | 1 | Toma una orden, pide cotizaciones en paralelo y la asigna | `condition_variable` | [plan] |
-| Tareas de cotización | una por candidato | Calcula `estimateDeliveryMs` y cumple su `future` | no espera: termina | [hecho] la función, [plan] el lanzamiento |
-| `CourierActor` | `fleet.couriers` (8) | Idle → restaurante → recoger → entregar | su propia `condition_variable` | [hecho] el ciclo de vida, [plan] el reparto |
+| Hilo | Cantidad | Sobre qué hace loop | Cómo espera |
+|------|----------|---------------------|-------------|
+| main / render | 1 | Arma un cuadro, revisa teclado y señal | `cv::waitKey` (ritmo de cuadros) |
+| `OrderGenerator` | 1 | Espera un intervalo exponencial y crea 1..`burstMax` órdenes | `cv.wait_for` con predicado, interrumpible |
+| `Dispatcher` | 1 | Toma una orden, encola las estimaciones y la asigna | `OrderBook::waitForUnassigned` con plazo |
+| Trabajadores del `QuotePool` | `hardware_concurrency()` | Saca una tarea de la cola, la ejecuta y cumple su promise | `cv_.wait` con predicado |
+| `CourierActor` | `fleet.couriers` (8) | libre → restaurante → retirar → entregar | su propia `condition_variable` |
+
+Con la configuración de ejemplo son 11 hilos propios más los del pool.
 
 ### Canales entre hilos
 
 | # | Canal | Mecanismo | Estado |
 |---|-------|-----------|--------|
 | 1 | `OrderGenerator` → `OrderBook` | monitor acotado; `admit()` verifica y agrega bajo un mismo candado | [hecho] |
-| 2 | `OrderBook` → `Dispatcher` | notificación al admitir una orden | [plan] |
-| 3 | `Dispatcher` → tareas de cotización | `std::future` con plazo de `quoteTimeoutMs` reales | [plan] |
-| 4 | `Dispatcher` → `CourierActor` | `offer()` sobre el monitor del courier + `notify_one` | [plan] |
-| 5 | `CourierActor` ↔ `Restaurant` | monitor con cola FIFO y `pickupSlots` | [plan] |
+| 2 | `OrderBook` → `Dispatcher` | notificación al admitir una orden; el dispatcher espera con plazo | [hecho] |
+| 3 | `Dispatcher` → trabajadores del pool | cola de tareas; una por candidato | [hecho] |
+| 4 | Trabajadores del pool → `Dispatcher` | un `promise`/`future` por tarea, con plazo común de `quoteTimeoutMs` reales | [hecho] |
+| 5 | `Dispatcher` → `CourierActor` | reserva en dos fases: `reserve()`, el registro en el libro, `commitReservation()` + `notify_one` | [hecho] |
+| 5b | `CourierActor` ↔ `Restaurant` | monitor con fila por orden de llegada y `pickupSlots` | [hecho] |
 | 6 | Courier averiado → courier receptor | `std::scoped_lock` sobre los dos couriers | [hecho] |
 | 7 | Todos → `EventLog` | monitor; una línea JSON completa por evento | [hecho] |
 | 8 | Renderer / dispatcher ← `CourierActor` | `snapshot()` devuelve una copia tomada bajo candado | [hecho] |
@@ -289,13 +362,13 @@ comprobación ocurre dentro del candado del `OrderBook`, que dura microsegundos.
 Un interbloqueo necesita que dos hilos tomen dos candados en **orden distinto**. La defensa es
 fijar un orden total y no violarlo nunca.
 
-| Nivel | Mutex | Puede tomar a continuación | Estado |
-|-------|-------|----------------------------|--------|
-| 1 | `CourierActor` (uno, o **dos a la vez** con `std::scoped_lock`) | `OrderBook`, `EventLog` | [hecho] |
-| 2 | `OrderBook`, `Restaurant` | `EventLog` | [hecho] el libro |
-| 3 | `EventLog` | ninguno (hoja) | [hecho] |
+| Nivel | Mutex | Puede tomar a continuación |
+|-------|-------|----------------------------|
+| 1 | `CourierActor` (uno, o **dos a la vez** con `std::scoped_lock`) | `OrderBook`, `EventLog` |
+| 2 | `OrderBook`, `Restaurant`, `QuotePool` | `EventLog` |
+| 3 | `EventLog` | ninguno (hoja) |
 
-Dos propiedades lo sostienen hoy:
+Cuatro propiedades lo sostienen:
 
 - **`EventLog::write()` no llama a nada que pueda tomar otro candado.** Es hoja por
   construcción, así que registrar un evento teniendo tomado el candado del `OrderBook` o el de
@@ -309,6 +382,11 @@ Dos propiedades lo sostienen hoy:
   simultáneas cruzadas entre dos couriers, sin un solo bloqueo.*
 - **`OrderGenerator` suelta su propio candado antes de llamar a `admit()`.** Nunca sostiene dos
   a la vez, de modo que no puede participar de un ciclo.
+- **La reserva del dispatcher no sostiene dos candados a la vez.** `reserve()` toma el del
+  courier y lo suelta; después el libro toma el suyo; después `commitReservation()` vuelve a
+  tomar el del courier. Si en cambio se hubiera resuelto llamando a `offer()` desde dentro del
+  candado del libro, el orden sería libro → courier, el inverso del nivel 1, y la jerarquía
+  quedaría violada por la corrección misma.
 
 ## 9. Argumento de ausencia de data races
 
@@ -350,31 +428,248 @@ cubre los despertares espurios. *Verificado: 8 couriers ociosos 400 ms consumier
 CPU (girando habrían consumido unos 3200), terminan en 3 ms, y 300 ciclos de arrancar y parar
 no colgaron nunca. ThreadSanitizer: 0 reportes (`analysis/tsan_courier_actor.txt`).*
 
+**`Restaurant`** — monitor con fila por número de turno. Los dos contadores —el próximo turno
+que se entrega y el que se está atendiendo— y la cantidad de lugares en uso viven bajo el mismo
+candado, y la espera lleva predicado. *Verificado: 12 couriers contra 2 lugares, máximo
+simultáneo observado 2; llegada 1,2,3,4,5 produce entrada 1,2,3,4,5.*
+
+**`QuotePool`** — monitor. La cola de tareas y la bandera de parada van bajo el mismo candado, y
+cada tarea lleva su propio `promise`, así que dos trabajadores nunca escriben el mismo
+resultado. Cada trabajador construye **su** `Router` dentro de su propio bucle, de modo que la
+memoria de trabajo de Dijkstra tampoco se comparte. *Verificado: 0 reportes de ThreadSanitizer
+sobre el programa completo, donde el pool atiende miles de estimaciones
+(`analysis/tsan_full_run.txt`).*
+
 **`OrderGenerator`** — es dueño exclusivo de su `OrderFactory` y su `mt19937`, así que esos dos
 no llevan sincronización: un dato con un único dueño no se protege, se posee. Lo único
 compartido es su bandera de parada y su contador, bajo su propio candado.
 
 ## 10. Mapa de conceptos
 
-PENDIENTE: completar la columna *Dónde* con `archivo:línea` reales y la justificación de cada fila.
+Cada fila del enunciado, con el lugar del código donde el concepto hace un trabajo real y
+qué pasaría sin él.
 
-| Carpeta | Concepto | Dónde se usa | Por qué es el adecuado ahí y qué fallaría sin él |
-|---------|----------|--------------|--------------------------------------------------|
-| 01 | Creación explícita de hilos y destino deliberado (join) para cada uno | | |
-| 01 | Una decisión que depende del paralelismo disponible del hardware | | |
-| 02 | Datos pasados a un hilo por valor, por referencia y por move | | |
-| 02 | Órdenes que viajan por el sistema por move, existiendo en un solo lugar | | |
-| 03 | Funciones miembro de objetos compartidos ejecutándose en hilos; contenedores de hilos | | |
-| 03 | Propiedad compartida que garantiza el tiempo de vida; sin punteros crudos dueños | | |
-| 04 | Tareas que devuelven un resultado por un future, con launch policy explícita | | |
-| 04 | Un par promise/future usado como canal de un solo disparo entre dos hilos | | |
-| 04 | Una espera con límite de tiempo y una excepción que cruza de un hilo a otro | | |
-| 05 | Argumento escrito, por objeto compartido, de por qué no hay data race | [Sección 9](#9-argumento-de-ausencia-de-data-races) | |
-| 05 | Un tipo seguro de copiar o mover porque sus funciones miembro especiales son correctas | | |
-| 06 | Exclusión mutua solo con locks de alcance; secciones críticas cortas | | |
-| 06 | Una operación que necesita dos locks a la vez y por qué no puede hacer deadlock | | |
-| 07 | Monitores: datos compartidos inaccesibles sin su lock | | |
-| 07 | Hilos que se bloquean hasta que se cumple una condición, robustos a despertares espurios y a un despertar final de apagado | | |
+### 01 · Creación explícita de hilos, cada uno con un destino deliberado
+
+`src/main.cpp:396` (creación) · `src/main.cpp:475`, `:478`, `:492` (espera)
+
+Los once hilos se crean con `std::thread` en `main`, **después** de construir todos los
+objetos que van a usar, y cada uno se espera con `join()` antes de salir: ocho couriers, el
+generador y el dispatcher, más los trabajadores del pool.
+
+Lanzarlos desde un constructor dejaría que un hilo viera un objeto a medio construir. Y un
+`std::thread` que se destruye sin `join()` ni `detach()` llama a `std::terminate`: el
+programa moriría en el cierre, sin resumen y con código distinto de cero, violando el §7.
+
+### 01 · Una decisión que depende del paralelismo disponible del hardware
+
+`src/QuotePool.cpp:12`
+
+La cantidad de trabajadores del pool sale de `std::thread::hardware_concurrency()`. Más
+trabajadores que núcleos no agregan paralelismo real, sólo cambios de contexto; menos dejan
+núcleos ociosos.
+
+La función **puede devolver cero** cuando el sistema no lo sabe, y en ese caso se eligen dos
+a mano: un pool de cero trabajadores sería un cuelgue garantizado, porque nadie atendería la
+cola.
+
+Antes cada estimación creaba su propio hilo. Medido con 64 couriers, pasar al pool bajó el
+tiempo de CPU de sistema un 33 % y subió las entregas un 3,5 % (§11).
+
+### 02 · Datos entregados a un hilo por valor, por referencia y por movimiento
+
+**Por valor** — `src/Dispatcher.cpp:77`: la lambda que se encola captura `view` y `order`
+por copia. Tiene que ser así: la tarea corre en otro hilo y puede ejecutarse después de que
+el dispatcher siguió de largo. Capturarlas por referencia dejaría referencias colgando a
+variables que ya no existen.
+
+**Por referencia** — `src/SimContext.h`: el grafo, el reloj, el log y el libro se comparten
+por referencia entre los once hilos. Copiar un grafo de 668 nodos por hilo sería absurdo, y
+copiar un monitor rompería su propósito: cada hilo protegería su propia copia.
+
+**Por movimiento** — `src/OrderBook.cpp:93` y `:99`: `admit()` recibe la orden por valor y la
+mueve al mapa. Transfiere las cuatro cadenas sin copiarlas, y evita pedir memoria al sistema
+con el candado del libro tomado.
+
+### 02 · Órdenes que viajan por movimiento y existen en un solo lugar
+
+`src/OrderBook.cpp:93` · `src/Order.h:32`
+
+Una orden existe **una sola vez**: dentro del `OrderBook`. Nadie más guarda una copia viva.
+Los couriers llevan `OrderId`, no `Order`, y cuando necesitan los datos piden una copia con
+`find()`, trabajan con ella y la descartan.
+
+Sin esto, la orden 42 estaría en el libro y en la bolsa del courier a la vez: dos copias del
+mismo estado que pueden contradecirse. Ahí nacen los tres defectos que el §4 prohíbe —una
+orden perdida, una duplicada, una en dos bolsas—.
+
+### 03 · Funciones miembro de objetos compartidos corriendo en hilos; contenedores de hilos
+
+`src/main.cpp:396` · `src/main.cpp:377` (la flota) · `src/main.cpp:394` (los hilos)
+
+`threads.emplace_back(&CourierActor::run, actor.get())` lanza un método de un objeto. La
+flota es un `std::vector<std::unique_ptr<CourierActor>>` y los hilos un
+`std::vector<std::thread>`, recorridos para arrancarlos y para esperarlos.
+
+### 03 · Propiedad compartida que garantiza la vida del objeto; ningún puntero crudo dueño
+
+`src/QuotePool.h:60` · `src/main.cpp:377`
+
+Cada tarea del pool se guarda junto a un `std::shared_ptr<std::promise<std::int64_t>>`. Los
+dos aspectos son necesarios: `std::function` exige que lo que captura sea **copiable** y un
+`std::promise` no lo es, por diseño; y el promise tiene que seguir vivo mientras lo necesiten
+los dos lados, quien encola y el trabajador que lo cumple.
+
+La flota usa `std::unique_ptr` en lugar de punteros crudos: los actores no son copiables ni
+movibles porque contienen un mutex, y su dirección no puede cambiar porque otros hilos
+guardan punteros a ellos. En el programa no hay **ningún** puntero crudo que sea dueño de
+algo.
+
+### 04 · Tareas que devuelven un resultado por un future, con política de lanzamiento declarada
+
+`src/Dispatcher.cpp:77` · `src/QuotePool.cpp:66`
+
+Cada estimación se encola con `submit()`, que devuelve un `std::future<std::int64_t>`. El
+trabajador cumple el promise con `set_value` y el resultado aparece en el future del
+dispatcher.
+
+La política está declarada y es explícita: las tareas corren **siempre** en un trabajador del
+pool, nunca en el hilo que las encola. La versión anterior usaba
+`std::async(std::launch::async, ...)`, donde la política también era explícita y obligaba a un
+hilo nuevo por tarea; esa es justamente la razón del cambio.
+
+### 04 · Un par promise/future como canal de un solo uso entre dos hilos
+
+`src/QuotePool.h:60` · `src/QuotePool.cpp:34` y `:66`
+
+Un promise por tarea: una escritura, una lectura, y se acabó.
+
+Importa el caso del cierre. Si `submit()` llega con el pool ya detenido, se cumple el promise
+con una excepción en vez de devolver un future que nunca se va a resolver
+(`QuotePool.cpp:34`). Y al parar, los trabajadores **atienden lo que quedó en la cola** antes
+de salir: descartarlo destruiría esos promises sin cumplir, y quien espera recibiría un error
+por promesa rota.
+
+### 04 · Una espera con límite de tiempo, y una excepción que cruza de un hilo a otro
+
+`src/Dispatcher.cpp:103` (el plazo) · `src/QuotePool.cpp:72` y `src/Dispatcher.cpp:113` (la
+excepción)
+
+`wait_until(deadline)` espera cada estimación hasta un **instante** común a todas, calculado
+una sola vez. Si fuera una duración por cada una, ocho candidatos podrían consumir ocho veces
+el presupuesto de `quoteTimeoutMs`.
+
+Las que llegan tarde se ignoran, pero **no se destruyen ahí**: se mudan a una lista del
+dispatcher. El destructor de un future de `std::async` bloquea hasta que su tarea termine, así
+que descartarlo al vencer el plazo haría esperar exactamente lo que se decidió no esperar, y
+el plazo quedaría de adorno.
+
+La excepción cruza así: el trabajador la guarda con `set_exception`, viaja dentro del future y
+se vuelve a lanzar en el `get()` del dispatcher, que la captura. Dejarla escapar de un hilo
+llamaría a `std::terminate`. Probado con tres de cuatro estimaciones lanzando: la orden igual
+se asigna a la que funcionó.
+
+### 05 · Un argumento escrito, por objeto compartido, de por qué no puede haber data race
+
+§9 de este documento.
+
+Un párrafo por objeto —`Config`, `CityGraph`, `SimClock`, `Router`, `EventLog`, `OrderBook`,
+`CourierActor`, `Restaurant`, `QuotePool`, `OrderGenerator`— con la medición que lo respalda
+en cada caso, y la corrida de ThreadSanitizer de §12 como verificación independiente.
+
+### 05 · Un tipo seguro de copiar o mover porque sus funciones especiales son correctas
+
+`src/Courier.h:24` · `src/CourierActor.h:33`
+
+Dos tipos con decisiones opuestas y deliberadas.
+
+`Courier` **es copiable**: sólo datos, sin sincronización. Esa es la razón de que `snapshot()`
+pueda devolver una copia tomada bajo candado, y de que el dibujo y las estimaciones trabajen
+sobre ella sin sostener nada.
+
+`CourierActor` **no es copiable ni movible**, y lo declara con `= delete`. Contiene un mutex y
+una variable de condición, que no son movibles; y otros hilos guardan punteros a él, así que
+su dirección no puede cambiar. Sin ese `= delete`, meterlo en un `std::vector` compilaría y el
+vector lo reubicaría al crecer, dejando punteros colgando. Lo mismo vale para `OrderBook`,
+`Restaurant`, `QuotePool`, `Dispatcher` y `OrderGenerator`.
+
+### 06 · Exclusión mutua exclusivamente con candados de alcance; secciones críticas cortas
+
+`src/CourierActor.cpp:189` y todos los monitores
+
+En el programa no hay **un solo** `lock()` ni `unlock()` escrito a mano: siempre
+`std::lock_guard`, `std::unique_lock` o `std::scoped_lock`. El candado se suelta en el
+destructor, por cualquier camino de salida, **incluida una excepción**. Con `unlock()` manual,
+una excepción dejaría el candado tomado para siempre y congelaría el programa.
+
+Las secciones críticas son cortas a propósito. En `EventLog::write` el JSON se arma **fuera**
+del candado, y dentro sólo queda leer el reloj y volcar la línea. En el reparto de un courier el
+candado se toma ocho veces y ninguna dura más de cuatro asignaciones: el viaje, que puede durar
+segundos, ocurre dentro de un `wait_for` que **libera el candado mientras espera**.
+
+Por eso una orden asignada no se reserva sosteniendo un candado: la exclusividad que dura en el
+tiempo se modela con **estado**, no con un mutex (§7).
+
+### 06 · Una operación que necesita dos candados a la vez, y por qué no puede interbloquearse
+
+`src/CourierActor.cpp:314`
+
+El traspaso de órdenes de un courier averiado a otro toma el candado de **los dos** con
+`std::scoped_lock`.
+
+Tomarlos uno por uno es el interbloqueo de manual: si A se avería y elige a B mientras B se
+avería y elige a A, cada uno tendría el suyo esperando el del otro para siempre.
+`std::scoped_lock` los toma con un algoritmo que evita ese ciclo sin importar el orden en que
+se le pasen.
+
+*Verificado: 300 averías simultáneas cruzadas entre dos couriers, sin un solo bloqueo.* Un
+interbloqueo no falla, cuelga: la única forma de buscarlo es provocar la carrera muchas veces
+con temporizaciones distintas.
+
+### 07 · Objetos monitor: datos compartidos a los que no se llega sin su candado
+
+`src/OrderBook.h` · `src/EventLog.h` · `src/Restaurant.h` · `src/CourierActor.h` ·
+`src/QuotePool.h`
+
+Cinco monitores. En todos, los datos y el mutex son privados, y la única vía de acceso son los
+métodos públicos, que toman el candado. Quien los usa no ve el mutex, no puede olvidarse de
+tomarlo y no puede tomarlo mal.
+
+El `OrderBook` lo lleva un paso más allá: **no expone un `pendingCount()` público**. Si lo
+hiciera, alguien escribiría `if (book.pendingCount() < max) book.add(...)`, y entre esas dos
+llamadas el candado se suelta. `admit()` verifica y agrega bajo el mismo candado y devuelve un
+`bool`: el resultado de una decisión que el llamador no puede tomar por su cuenta. El mismo
+patrón está en `CourierActor::reserve` (`src/CourierActor.cpp:206`), que verifica el lugar y lo
+aparta sin soltar el candado entre las dos cosas.
+
+*Verificado: 1600 intentos desde 16 hilos contra un `maxPending` de 50 admiten exactamente
+50.* Con un solo hilo ese número daría 50 igual, así que una prueba secuencial no detectaría
+nada.
+
+### 07 · Hilos que esperan una condición, despertados por otro, robustos ante avisos espurios y ante un despertar final
+
+`src/CourierActor.cpp:26` · `src/OrderBook.cpp:287` · `src/Restaurant.cpp:14` ·
+`src/QuotePool.cpp:53`
+
+Cuatro esperas, cada una con los tres cuidados.
+
+**Predicado, siempre.** Una `condition_variable` puede despertar sin que nadie la haya
+notificado. `wait(lock, pred)` vuelve a dormirse si la condición no se cumple de verdad.
+
+**La bandera se escribe con el candado tomado.** Si se escribiera sin él, el hilo podría
+evaluar el predicado como falso y, antes de dormirse, recibir la escritura y la notificación:
+el aviso se perdería y el hilo quedaría dormido para siempre, colgando el `join()` del cierre.
+`wait()` libera el candado y duerme de forma **atómica**, y esa atomicidad es la razón de ser
+de las variables de condición.
+
+**Un despertar final para el cierre.** `requestStop()` levanta la bandera y notifica; el
+`Restaurant` tiene su `stop()`, el `OrderBook` su `stopWaiting()`, el `QuotePool` su `stop()`.
+Y el que abandona la fila del restaurante **cede su turno**: si se fuera sin avanzar el
+contador, los que están detrás esperarían un número que ya nadie va a atender.
+
+*Verificado: 8 couriers ociosos durante 400 ms consumieron 0,151 ms de CPU —girando habrían
+consumido unos 3200—, los ocho hilos terminan en 3 ms, y 300 ciclos de arrancar y parar con
+temporizaciones distintas no colgaron nunca.*
 
 ## 11. Experimentos
 
@@ -457,6 +752,74 @@ defecto dio `created 447 = delivered 98 + rejected 304 + pending 45`.
 comportamiento correcto: no pierde órdenes ni las acumula indefinidamente, las rechaza al
 entrar.
 
+### Experimento 5: por qué las averías casi no se concretan
+
+**Qué se cambió.** Nada del código: sólo el tamaño de la flota, con la probabilidad de avería
+fija en 0,6. Configuraciones en `experiments/exp5_averias_flota_8.json` y
+`experiments/exp5_averias_flota_16.json`.
+
+**De dónde salió la pregunta.** De una discrepancia. Con la configuración por defecto
+—`breakdownProbability: 0.2`, 8 couriers— el resumen informaba **cero averías** sobre 81
+retiros. Como la avería se sortea en dos puntos por viaje con la mitad de la probabilidad en
+cada uno, eran unos 162 sorteos a 0,1: esperar cero es esperar algo con probabilidad del orden
+de 10⁻⁷. El número no era mala suerte, era una propiedad del diseño que no estaba escrita.
+
+**Qué se midió.** Primero un barrido de la probabilidad con 8 couriers, y después el tamaño de
+la flota con la probabilidad fija.
+
+| `breakdownProbability` (8 couriers) | retiros | averías concretadas |
+|---|---|---|
+| 0,05 | 79 | 0 |
+| 0,20 | 81 | 0 |
+| 0,40 | 70 | 1 |
+| 0,60 | 59 | 2 |
+| 0,80 | 61 | 2 |
+
+| flota (`breakdownProbability` 0,6) | retiros | averías concretadas |
+|---|---|---|
+| 8 couriers | 60 | 2 |
+| 16 couriers | 101 | **5** |
+
+**Conclusión.** La avería sorteada y la avería concretada no son lo mismo. El traspaso es
+todo-o-nada: si ningún compañero tiene lugar para **todas** las órdenes del averiado, el sorteo
+se descarta y el courier sigue trabajando. Con la cola saturada —1358 órdenes creadas y
+`maxPending` lleno— todos los couriers andan con la bolsa ocupada, así que casi ningún sorteo
+encuentra receptor. Duplicar la flota duplica los receptores posibles y las averías concretadas
+suben de 2 a 5, con la probabilidad sin tocar.
+
+Esto no es un defecto: es la consecuencia directa de la regla del §6, donde `orderReassigned`
+lleva `from` y `to` obligatorios y no existe evento para devolver una orden a la cola (ver el
+experimento 3). Pero cambia cómo hay que leer `breakdownProbability`: es la tasa a la que **se
+intenta** una avería, no la tasa a la que ocurre. Y tiene una consecuencia práctica para las
+pruebas: una corrida con la flota saturada casi no ejercita el `std::scoped_lock` del traspaso,
+así que la configuración de 16 couriers es la que se usa para el análisis con ThreadSanitizer
+del §12.
+
+### Experimento 6: un pool acotado en lugar de un hilo por estimación
+
+**Qué se cambió.** Las estimaciones se lanzaban con `std::async(std::launch::async, ...)`, que
+crea un hilo del sistema operativo por tarea. Ahora las atiende un `QuotePool` con tantos
+trabajadores como `std::thread::hardware_concurrency()`, creados una sola vez.
+
+**Qué se mantuvo igual.** Semilla 42, 64 couriers (`experiments/exp6_pool_64_couriers.json`), que es
+la flota donde el costo por tarea debería notarse.
+
+| 64 couriers | antes | después |
+|---|---|---|
+| hilos vivos en el pico | 69 | 75 |
+| tiempo de CPU de sistema | — | **−33 %** |
+| entregadas | — | **+3,5 %** |
+
+**Conclusión, con una corrección.** La predicción era que con 64 couriers habría del orden de 64
+hilos vivos por orden y el sistema se ahogaría creándolos. Medido, el pico de hilos fue 69 antes
+y 75 después: **la predicción era falsa**. Las estimaciones duran microsegundos, así que los
+hilos nacen y mueren antes de acumularse.
+
+Lo que el pool sí mejora es el costo de crearlos y destruirlos, que es lo que explica el 33 %
+menos de CPU de sistema. El beneficio real es acotar los recursos y reutilizar el `Router` de
+cada trabajador —la memoria de trabajo de Dijkstra, que antes se construía una vez por
+estimación—, no evitar un colapso que no iba a ocurrir.
+
 ## 12. Análisis con herramientas
 
 Las salidas completas y sin editar están en `analysis/`.
@@ -465,6 +828,8 @@ Las salidas completas y sin editar están en `analysis/`.
 |---|---|---|---|
 | ThreadSanitizer | GCC 13.3 | `EventLog` con 8 hilos × 500 eventos | 0 reportes |
 | ThreadSanitizer | GCC 13.3 | `CourierActor`: 8 hilos ociosos + 300 ciclos de arranque y parada | 0 reportes |
+| ThreadSanitizer | GCC 13.3 | **el programa completo** sin ventana: 16 couriers, ráfagas, averías y pool | 0 reportes, salida 0 |
+| ThreadSanitizer | GCC 13.3 | el programa completo **con** ventana | 5 reportes, **ninguno del código propio** |
 | AddressSanitizer + LeakSanitizer | GCC 13.3 | corrida completa de 25 s con ráfagas, averías y cierre por señal | 0 errores; 320 bytes en 3 fugas, **ninguna del código propio** |
 | `tools/validate_log.py` | propia | el log y el resumen de cada corrida | ver abajo |
 
@@ -484,6 +849,60 @@ capacidad de detección: podría ocurrir que la prueba no ejercite el código o 
 nunca coincidan. Por eso se repitió el análisis sobre una copia con el `lock_guard` del
 registro deliberadamente desactivado. En esa variante la herramienta informó una condición de
 carrera y el programa abortó, lo que confirma que la ejecución limpia es significativa.
+
+### ThreadSanitizer sobre el programa completo
+
+Los dos análisis anteriores miran un monitor por vez, con una prueba que lo castiga a
+propósito. Este mira el programa entero: el hilo principal, 16 couriers, el generador, el
+dispatcher, los trabajadores del pool y las averías traspasándose órdenes.
+
+```
+cmake -DENABLE_TSAN=ON .. && make
+TSAN_OPTIONS="halt_on_error=0 history_size=4"   setarch $(uname -m) -R ./build/delivery_sim cfg.json --log run.log --no-window
+```
+
+| | sin ventana | con ventana |
+|---|---|---|
+| código de salida | **0** | 66 |
+| reportes | **0** | 5 |
+| frames en `delivery_sim` | 0 | **0** |
+| rutas bajo nuestro `src/` | 0 | **0** |
+
+El código de salida es parte de la evidencia: ThreadSanitizer termina con 66 cuando
+encontró algo, incluso con `halt_on_error=0`, así que un 0 es por sí mismo la confirmación
+de que no reportó nada. Salidas crudas en `analysis/tsan_full_run_sin_ventana.err` (vacío)
+y `analysis/tsan_full_run_con_ventana.err`.
+
+**Los cinco reportes de la corrida con ventana no son del programa.** Ocurren por completo
+dentro de `libQt5Core`, `libdbus-1`, `libc` y los interceptores del propio sanitizer: Qt
+arranca sus hilos para la ventana —uno aparece por nombre en los reportes, `QDBusConnection`—
+y habla con el escritorio por dbus. Comprobarlo requiere buscar con cuidado, porque la
+búsqueda ingenua da falsos positivos: los marcos del sanitizer traen rutas como
+`../../../../src/libsanitizer/tsan/...`, así que buscar `src/` a secas calza, y buscar
+`main.` calza con `libc_start_call_main.h`. Con el patrón correcto, `grep -c delivery_sim`
+devuelve 0 y no hay un solo marco en un archivo nuestro.
+
+**Por qué no se suprimen.** Se intentó y se descartó. `libdbus` y `libglib` vienen sin
+símbolos en este sistema —sus marcos salen como `<null> <null> (libdbus-1.so.3+0x34c8b)`—,
+así que no hay nombre de función que poner en una supresión y la única forma sería
+`called_from_lib` sobre la librería entera. Eso taparía también una carrera propia que
+pasara por ellas, que es exactamente lo que el análisis tiene que poder ver. Y, medido, no
+termina: al suprimir `libdbus` apareció `libglib`, y al suprimir `libglib` aparecieron
+`libQt5DBus`, `libQt5XcbQpa` y `libxcb`. Dejar el reporte en blanco a fuerza de tapar media
+pila gráfica no demuestra nada sobre este programa.
+
+La corrida que vale es la de `--no-window`, donde esas librerías no participan. Ahí lo único
+suprimido son **tres funciones de GDAL** (`CPLAcquireMutex` y `CPLCreateOrAcquireMutexEx`),
+que aparecen dentro de `cv::imread` al leer el PNG del mapa, en el hilo principal y antes de
+que exista un solo hilo de la simulación. Se suprimen por nombre de función y no por
+librería, en `src/TsanSuppressions.cpp` y embebidas en el binario para que compilar siga
+siendo `cmake .. && make`: nombrar la función deja pasar cualquier otro reporte de GDAL,
+incluido uno que tocara nuestro código.
+
+**Lo que esta corrida encontró.** Cero carreras, pero no cero defectos: el validador rechazó
+una línea de 3396 de este mismo log, y era un defecto real del dispatcher. Está en la lista
+de abajo. El detalle completo, con los cinco reportes y las comprobaciones, en
+`analysis/tsan_full_run.txt`.
 
 ### AddressSanitizer
 
@@ -518,6 +937,16 @@ Encontró tres defectos reales que ni las pruebas unitarias ni la inspección ha
 2. Las órdenes rechazadas por cola llena no emitían `orderCreated`: el resumen decía 86 creadas
    y el log tenía 68.
 3. El experimento 3, descrito arriba.
+4. El dispatcher registraba la asignación en el libro **antes** de entregarle la orden al
+   courier. Entre un paso y el otro pasan hasta `quoteTimeoutMs`, y en ese rato el courier
+   puede llenarse o averiarse: la entrega fallaba con `orderAssigned` ya escrito, la orden
+   volvía a la cola, y el §6 no tiene ningún evento para ese paso atrás. El log mostraba la
+   orden pasando de `assigned` a `assigned`. Se corrigió invirtiendo el orden en una reserva
+   de dos fases —`reserve()`, el registro, `commitReservation()`—, de modo que el único
+   camino de salida que no escribe nada es el de la reserva rechazada. Una línea de 3396, en
+   la corrida con 16 couriers y averías frecuentes: ni las 17 pruebas unitarias ni
+   ThreadSanitizer la vieron, porque no era una carrera de datos sino una secuencia de
+   estados inválida.
 
 ## 13. Limitaciones conocidas
 
@@ -529,6 +958,12 @@ de retiro casi nunca son el cuello de botella. Ver el experimento 1.
 **Un courier averiado no vuelve al servicio.** El enunciado no menciona reparaciones, así que
 la avería se modela como una baja definitiva. En corridas largas con probabilidad alta, la flota
 se agota y la tasa de entrega cae a cero.
+
+**`breakdownProbability` es la tasa a la que se *intenta* una avería, no a la que ocurre.**
+Como el traspaso es todo-o-nada y a un solo compañero, con la flota saturada casi ningún
+sorteo encuentra receptor: con 8 couriers y probabilidad 0,2 se concretan cero averías sobre
+81 retiros. Está medido en el experimento 5. Para ejercitar el traspaso hace falta una flota
+con couriers libres.
 
 **La estimación de tiempo ignora las órdenes que el courier ya lleva.** Un courier con la bolsa
 llena da el mismo número que uno vacío, así que el dispatcher puede elegirlo creyendo que está
