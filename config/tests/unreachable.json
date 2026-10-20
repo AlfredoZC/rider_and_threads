@@ -1,0 +1,111 @@
+{
+  "map": {
+    "image": "../../data/equipetrol.png",
+    "attribution": "© OpenStreetMap contributors",
+    "bounds": {
+      "north": -17.7535,
+      "south": -17.7765,
+      "west": -63.204,
+      "east": -63.187
+    }
+  },
+  "nodes": [
+    {
+      "id": "a",
+      "lat": -17.7615,
+      "lon": -63.1938
+    },
+    {
+      "id": "b",
+      "lat": -17.76,
+      "lon": -63.192
+    },
+    {
+      "id": "c",
+      "lat": -17.763,
+      "lon": -63.195
+    },
+    {
+      "id": "d",
+      "lat": -17.765,
+      "lon": -63.19
+    },
+    {
+      "id": "x",
+      "lat": -17.77,
+      "lon": -63.189
+    },
+    {
+      "id": "y",
+      "lat": -17.756,
+      "lon": -63.197
+    }
+  ],
+  "streets": [
+    {
+      "id": "s0",
+      "from": "a",
+      "to": "b",
+      "oneWay": false
+    },
+    {
+      "id": "s1",
+      "from": "b",
+      "to": "c",
+      "oneWay": false
+    },
+    {
+      "id": "s2",
+      "from": "c",
+      "to": "a",
+      "oneWay": false
+    },
+    {
+      "id": "s3",
+      "from": "c",
+      "to": "d",
+      "oneWay": false
+    },
+    {
+      "id": "s4",
+      "from": "y",
+      "to": "a",
+      "oneWay": true
+    }
+  ],
+  "restaurants": [
+    {
+      "id": "r0",
+      "name": "Prueba",
+      "node": "a",
+      "pickupSlots": 1,
+      "prepTimeMs": [
+        30000,
+        60000
+      ]
+    }
+  ],
+  "fleet": {
+    "couriers": 3,
+    "bagCapacity": 2,
+    "speedKmh": 30,
+    "startNode": "a"
+  },
+  "orders": {
+    "meanIntervalMs": 5000,
+    "burstMax": 3,
+    "maxPending": 20,
+    "seed": 42
+  },
+  "dispatch": {
+    "quoteTimeoutMs": 200,
+    "acceptTimeoutMs": 120000
+  },
+  "incidents": {
+    "breakdownProbability": 0.0
+  },
+  "simulation": {
+    "durationS": 1800,
+    "timeScale": 300
+  }
+}

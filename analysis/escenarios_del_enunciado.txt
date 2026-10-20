@@ -1,0 +1,110 @@
+Los escenarios con los que el §11 dice que se va a probar el proyecto
+=====================================================================
+
+El §11 del enunciado enumera las configuraciones que van a usar los revisores. Este
+archivo es el resultado de correrlas todas, tres veces cada una, porque el mismo §11
+avisa que "los defectos que aparecen solo a veces son defectos".
+
+Las configuraciones estan en config/tests/, para que cualquiera pueda repetirlas sin
+armarlas a mano.
+
+Como se corre
+-------------
+    ./build/delivery_sim config/tests/<escenario>.json --log run.log --no-window
+    python3 tools/validate_log.py run.log resumen.txt
+
+Resultado
+---------
+                                exit    validador
+  bag_capacity_1       r1 r2 r3   0     TODO CORRECTO
+  breakdown_always     r1 r2 r3   0     TODO CORRECTO
+  bursts_same_instant  r1 r2 r3   0     TODO CORRECTO
+  unreachable          r1 r2 r3   0     TODO CORRECTO
+  small                r1 r2 r3   0     TODO CORRECTO
+
+  fallas totales: 0 de 15 corridas
+
+Que provoca cada uno (primera corrida de cada grupo)
+----------------------------------------------------
+  bag_capacity_1        queueFull 338, noCourier 60, averias 1, traspasos 1, entregadas 39
+  breakdown_always      queueFull 479, noCourier 43, averias 4, traspasos 7, entregadas 30
+  bursts_same_instant   queueFull 4042, entregadas 29
+  unreachable           unreachable 125, queueFull 40, noCourier 107, entregadas 49
+  small                 queueFull 3, entregadas 13
+
+Lecturas:
+
+  bursts_same_instant crea 4042 ordenes con intervalo de 50 ms y rafagas de hasta 60, y
+  las rechaza todas por queueFull con pending clavado en el maxPending configurado. Es la
+  prueba del check-and-act del admit(): varias ordenes compitiendo por los ultimos lugares
+  en el mismo instante.
+
+  breakdown_always, con probabilidad 1, agota la flota: cada courier se averia en el primer
+  sorteo de cada viaje. El programa sigue respondiendo, cierra con 0 e informa el resumen.
+
+  bag_capacity_1 fuerza que el traspaso solo pueda concretarse hacia un courier vacio, que
+  es el caso mas restrictivo del todo-o-nada.
+
+  Los escenarios que el §11 pide y que ya tenian configuracion son la flota grande de 64
+  couriers (experiments/exp6_pool_64_couriers.json), el de un solo lugar de retiro
+  (experiments/exp4_un_solo_slot.json) y las doce invalidas (config/tests/invalid_*.json,
+  que corre tools/check_invalid_configs.sh).
+
+El defecto que encontro el escenario de destinos inalcanzables
+--------------------------------------------------------------
+unreachable.json no usa el mapa real. Tiene un grafo de seis nodos hecho a mano:
+
+    a, b, c, d   fuertemente conexos; el restaurante esta en "a"
+    x            sin ninguna calle: no se puede llegar ni salir
+    y            solo tiene la calle y -> a, asi que NO tiene entrada
+
+El destino se sortea entre todos los nodos menos el del restaurante, o sea entre
+{b, c, d, x, y}: dos de cinco son inalcanzables.
+
+Hace falta un grafo asi porque el grafo oficial es FUERTEMENTE CONEXO. Comprobado con un
+recorrido desde cada restaurante sobre config/equipetrol.json:
+
+    r0 nodo n15  -> alcanza 668 de 668
+    r1 nodo n255 -> alcanza 668 de 668
+    r2 nodo n545 -> alcanza 668 de 668
+    r3 nodo n201 -> alcanza 668 de 668
+    r4 nodo n464 -> alcanza 668 de 668
+    r5 nodo n600 -> alcanza 668 de 668
+
+Con la configuracion de entrega, entonces, el rechazo unreachable no puede ocurrir nunca,
+y ese camino del codigo quedaba sin ejercitar en toda la bateria de pruebas.
+
+ANTES del arreglo, el escenario daba:
+
+    rechazos: {'queueFull': 108, 'noCourier': 151}
+
+Cero unreachable, contra el §4: "If the delivery location cannot be reached through the
+street network, the order is rejected with reason unreachable".
+
+La causa: unreachable solo se emitia cuando un courier no podia llegar AL RESTAURANTE
+(CourierActor::travelTo). Cuando el destino era el inalcanzable, las estimaciones de todos
+los candidatos volvian kUnreachable, el dispatcher no encontraba a quien asignarla y la
+orden se reintentaba hasta vencer su acceptTimeoutMs: terminaba rechazada como noCourier.
+
+Por que el validador no lo vio: assigned -> rejected es una transicion legal y los
+contadores cuadraban. El log era internamente consistente; lo que estaba mal era la razon.
+Un validador compara el log contra las reglas del log, y esto solo se ve comparando el log
+contra el mundo.
+
+El arreglo es Dispatcher::destinoInalcanzable: una consulta de alcanzabilidad del
+restaurante al destino, una sola vez por orden y antes de cotizar. La pregunta correcta es
+sobre el grafo y no sobre los couriers, porque entre dos nodos hay camino o no hay, y eso
+no cambia con el tiempo ni con donde este cada moto; hacerla por candidato habria dado la
+misma respuesta ocho veces.
+
+DESPUES del arreglo:
+
+    rechazos: {'unreachable': 125, 'queueFull': 40, 'noCourier': 107}
+
+Los noCourier que quedan son legitimos: ordenes con destino alcanzable que ningun courier
+tomo dentro del plazo, con tres couriers y un solo lugar de retiro.
+
+La prueba que lo cubre esta en tests/test_dispatcher.cpp, y lleva control positivo: admite
+tres ordenes, dos con destino inalcanzable y una con destino alcanzable, y comprueba que
+las dos primeras se rechacen con unreachable Y que la tercera no se rechace. Sin el control
+positivo, una comprobacion que rechazara todo pasaria igual.
