@@ -18,7 +18,17 @@ Dispatcher::Dispatcher(const Config& cfg, const SimContext& ctx,
       // El valor por defecto es la funcion misma: no hace falta envolverla en una lambda
       // si la firma coincide. Las pruebas y el experimento del §12 la reemplazan.
       quote_(estimateDeliveryMs),
+      router_(ctx.graph),
       pool_(ctx.graph) {}
+
+bool Dispatcher::destinoInalcanzable(const Order& order) {
+    const NodeIndex pickup = ctx_.graph.indexOf(order.pickupNode);
+    const NodeIndex dropoff = ctx_.graph.indexOf(order.dropoffNode);
+    if (pickup == kNoNode || dropoff == kNoNode) {
+        return true;
+    }
+    return !router_.shortestPath(pickup, dropoff).found;
+}
 
 
 void Dispatcher::run() {
@@ -56,6 +66,26 @@ void Dispatcher::dispatchOne(OrderId orderId) {
         return;   // alguien la movio entre que la listamos y ahora
     }
     const Order order = *maybe;
+
+    // El §4 es explicito: si no se puede llegar al destino por la red de calles, la
+    // orden se rechaza con unreachable. Se pregunta ANTES de cotizar, y por una razon
+    // que no es la eficiencia.
+    //
+    // Sin esta comprobacion, un destino inalcanzable hacia que las estimaciones de todos
+    // los candidatos volvieran kUnreachable, el dispatcher no encontraba a quien
+    // asignarla y la orden se reintentaba hasta vencer su acceptTimeoutMs: terminaba
+    // rechazada con noCourier. El log quedaba internamente consistente -assigned a
+    // rejected es legal- pero con la razon equivocada, asi que el validador no lo veia.
+    // Lo encontro el escenario config/tests/unreachable.json, con 151 rechazos noCourier
+    // y ni uno unreachable.
+    //
+    // La pregunta correcta es sobre el grafo, no sobre los couriers: entre el restaurante
+    // y el destino hay camino o no hay, y eso no cambia con el tiempo ni con donde este
+    // cada moto. Preguntarlo por candidato habria dado la misma respuesta ocho veces.
+    if (destinoInalcanzable(order)) {
+        ctx_.book.reject(orderId, RejectReason::unreachable);
+        return;
+    }
 
     // Nadie la acepto a tiempo: se rechaza con noCourier (§4). Este plazo es en tiempo
     // SIMULADO, a diferencia del de las estimaciones.
