@@ -65,6 +65,20 @@ void CourierActor::deliver(Router& router, OrderId orderId) {
     // Llego al restaurante. pickupStarted se registra directo en el log porque no es un
     // cambio de estado de la orden: es un instante del recorrido del courier.
     setCourierState(CourierState::atRestaurant);
+
+    // Hace fila por un lugar en el restaurante. Es el unico punto donde el courier se
+    // bloquea esperando a OTRO courier, y por eso el estado atRestaurant existe separado
+    // de toPickup: en la ventana, un courier naranja es uno esperando su turno.
+    //
+    // Su propio candado NO esta tomado mientras espera: acquire() bloquea sobre el
+    // candado del restaurante, asi que el renderer puede seguir pidiendole snapshot().
+    const auto entry = ctx_.restaurants.find(order.restaurantId);
+    Restaurant* const restaurant =
+        entry == ctx_.restaurants.end() ? nullptr : entry->second.get();
+    if (restaurant != nullptr && !restaurant->acquire()) {
+        return;   // le pidieron parar mientras hacia fila
+    }
+
     Event started;
     started.name = EventName::kPickupStarted;
     started.order = orderId;
@@ -76,10 +90,18 @@ void CourierActor::deliver(Router& router, OrderId orderId) {
     // preparacion se cuenta desde que la orden se creo.
     const std::int64_t readyMs = order.createdMs + order.prepMs;
     if (readyMs > arrivedMs && !waitSim(readyMs - arrivedMs)) {
+        if (restaurant != nullptr) {
+            // Le pidieron parar esperando la comida: el lugar se libera igual, o
+            // el siguiente de la fila esperaria un turno que nadie va a ceder.
+            restaurant->release();
+        }
         return;
     }
 
     ctx_.book.pickedUp(orderId, id_);
+    if (restaurant != nullptr) {
+        restaurant->release();   // retiro: libera el lugar para el siguiente
+    }
 
     // La otra mitad del sorteo, ya con la comida encima. Es el caso interesante:
     // el traspaso tiene que mover una orden RETIRADA, y el receptor termina una

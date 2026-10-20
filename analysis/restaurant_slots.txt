@@ -1,0 +1,40 @@
+# Slots de retiro en los restaurantes (DP.5)
+
+Fecha: 2026-10-19T21:58:09-04:00
+
+El §4 pide dos cosas a la vez: como maximo pickupSlots couriers retirando
+simultaneamente, y los demas atendidos EN ORDEN DE LLEGADA.
+
+## Por que no alcanza un wait comun
+
+Lo intuitivo seria esperar sobre la condicion "hay lugar":
+
+    cv_.wait(lock, [this] { return inUse_ < slots_; });
+
+Eso respeta el limite pero no el orden. Al liberarse un lugar, notify_all despierta a
+todos los que esperan y pasa el que el planificador elija, que puede ser el que acaba
+de llegar mientras otro lleva rato esperando. Es inanicion.
+
+## Numeros de turno
+
+Cada courier que llega saca un numero y solo pasa cuando le toca Y hay lugar. El
+predicado depende de SU numero, asi que aunque notify_all despierte a los ocho, siete
+comprueban que no es su turno y se vuelven a dormir.
+
+## Mediciones
+
+  12 couriers contra 2 slots .......... maximo simultaneo observado: 2
+  los 12 pasaron, ninguno quedo afuera
+  llegada 1,2,3,4,5 ................... entrada 1,2,3,4,5
+  stop() con 6 en la fila ............. los 6 salieron en 0 ms
+
+El tercero cubre un detalle facil de pasar por alto: el courier que abandona la fila
+tiene que CEDER su turno. Si se va sin avanzar el contador, los que estan detras
+esperan un numero que ya nadie va a atender, y el join() del cierre no vuelve nunca.
+
+## Corrida completa
+
+  simulationStopping   1
+resumen: {"created": 447, "delivered": 98, "rejected": 304, "pending": 45, "reassigned": 1, "breakdowns": 1, "avgDeliveryMs": 1218629, "maxDeliveryMs": 2009794, "deliveredPerCourier": {"c1": 15, "c2": 0, "c3": 12, "c4": 17, "c5": 12, "c6": 14, "c7": 14, "c8": 14}}
+
+TODO CORRECTO: el log es valido y el resumen coincide con el

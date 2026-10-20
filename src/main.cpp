@@ -26,6 +26,7 @@
 #include "EventLog.h"
 #include "OrderBook.h"
 #include "OrderGenerator.h"
+#include "Restaurant.h"
 #include "SimClock.h"
 #include "Summary.h"
 #include "CityGraph.h"
@@ -217,7 +218,14 @@ int main(int argc, char** argv) {
     // que el libro sobrevive a quienes lo usan.
     OrderBook book(cfg.maxPending, clock, *log);
     OrderGenerator generator(cfg, clock, book);
-    const SimContext ctx{graph, clock, *log, book};
+    // Un monitor por restaurante. Se construyen antes que la flota porque los
+    // couriers los referencian a traves del contexto.
+    Restaurants restaurants;
+    for (const RestaurantConfig& r : cfg.restaurants) {
+        restaurants.emplace(r.id, std::make_unique<Restaurant>(r.id, r.pickupSlots));
+    }
+
+    const SimContext ctx{graph, clock, *log, book, restaurants};
 
     // La flota. unique_ptr y no vector<CourierActor> por dos razones: el actor tiene un
     // mutex y una condition_variable adentro, así que no es copiable ni movible y el
@@ -298,6 +306,12 @@ int main(int argc, char** argv) {
 
     dispatcher.requestStop();
     dispatcherThread.join();
+
+    // Los restaurantes se avisan antes que los couriers: si uno esta haciendo fila,
+    // tiene que poder salir de ella para despues atender su propia parada.
+    for (auto& entry : restaurants) {
+        entry.second->stop();
+    }
 
     // A TODOS primero y recien despues se los espera: pedir y esperar de a uno
     // serializaria un cierre que puede ser simultaneo.
