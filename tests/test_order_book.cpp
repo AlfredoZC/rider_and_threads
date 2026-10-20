@@ -182,7 +182,11 @@ int main() {
         assert(book.waitForUnassigned(std::chrono::seconds(5)));
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                       std::chrono::steady_clock::now() - t0).count();
-        assert(ms < 50);
+        // Lo que se afirma es que NO espero el plazo de 5 s, no un presupuesto de
+        // latencia. El margen es generoso a proposito: con la maquina cargada, un umbral
+        // de 50 ms convierte una prueba de comportamiento en una de velocidad, y falla a
+        // veces sin que haya ningun defecto.
+        assert(ms < 1000);
 
         // sin ordenes pendientes, espera el plazo SIN consumir CPU
         assert(book.assign(1, 1));                  // ya no hay ninguna en created
