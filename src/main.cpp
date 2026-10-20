@@ -5,6 +5,8 @@
 //
 // Uso: delivery_sim <config.json> [--log <path>]
 #include <algorithm>
+#include <cmath>
+#include <cstring>
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -112,38 +114,164 @@ void drawLabel(cv::Mat& img, const std::string& text, cv::Point origin, double s
                 cv::LINE_AA);
 }
 
-// Dibuja calles (azul = doble sentido, rojo con flecha = un sentido), nodos y restaurantes.
-void drawGraph(cv::Mat& img, const Config& cfg) {
-    std::unordered_map<std::string, cv::Point2f> px;
-    for (const auto& n : cfg.nodes) {
-        px[n.id] = toPixel(n.lat, n.lon, cfg.bounds, img.size());
+// Las coordenadas en pixeles de cada nodo. Se calcula UNA vez: la proyeccion no cambia
+// porque la imagen no cambia de tamaño durante la simulacion. Antes cada funcion de
+// dibujo rehacia este mapa, es decir 668 hashes de cadena por llamada; hacerlo treinta
+// veces por segundo para dibujar couriers habria sido un desperdicio puro.
+using PixelMap = std::unordered_map<std::string, cv::Point2f>;
+
+PixelMap buildPixelMap(const Config& cfg, const cv::Size& size) {
+    PixelMap px;
+    px.reserve(cfg.nodes.size());
+    for (const NodeConfig& n : cfg.nodes) {
+        px[n.id] = toPixel(n.lat, n.lon, cfg.bounds, size);
     }
+    return px;
+}
+
+// Dibuja calles (azul = doble sentido, rojo con flecha = un sentido), nodos y el inicio.
+void drawGraph(cv::Mat& img, const Config& cfg, const PixelMap& px) {
     for (const auto& s : cfg.streets) {
         if (s.oneWay) {
-            cv::arrowedLine(img, px[s.from], px[s.to], cv::Scalar(40, 40, 220), 2, cv::LINE_AA, 0, 0.25);
+            cv::arrowedLine(img, px.at(s.from), px.at(s.to), cv::Scalar(40, 40, 220), 2,
+                            cv::LINE_AA, 0, 0.25);
         } else {
-            cv::line(img, px[s.from], px[s.to], cv::Scalar(220, 80, 30), 2, cv::LINE_AA);
+            cv::line(img, px.at(s.from), px.at(s.to), cv::Scalar(220, 80, 30), 2, cv::LINE_AA);
         }
     }
     for (const auto& n : cfg.nodes) {
-        cv::circle(img, px[n.id], 3, cv::Scalar(255, 255, 255), cv::FILLED, cv::LINE_AA);
-        cv::circle(img, px[n.id], 3, cv::Scalar(0, 0, 0), 1, cv::LINE_AA);
+        cv::circle(img, px.at(n.id), 3, cv::Scalar(255, 255, 255), cv::FILLED, cv::LINE_AA);
+        cv::circle(img, px.at(n.id), 3, cv::Scalar(0, 0, 0), 1, cv::LINE_AA);
     }
-    const cv::Point2f start = px[cfg.startNode];
-    cv::circle(img, start, 8, cv::Scalar(0, 160, 0), 3, cv::LINE_AA);
+    cv::circle(img, px.at(cfg.startNode), 8, cv::Scalar(0, 160, 0), 3, cv::LINE_AA);
 }
 
-void drawRestaurants(cv::Mat& img, const Config& cfg) {
-    std::unordered_map<std::string, cv::Point2f> px;
-    for (const auto& n : cfg.nodes) {
-        px[n.id] = toPixel(n.lat, n.lon, cfg.bounds, img.size());
-    }
+void drawRestaurants(cv::Mat& img, const Config& cfg, const PixelMap& px) {
     for (const auto& r : cfg.restaurants) {
-        const cv::Point center(cvRound(px[r.node].x), cvRound(px[r.node].y));
-        cv::rectangle(img, center - cv::Point(7, 7), center + cv::Point(7, 7), cv::Scalar(0, 0, 0),
-                      cv::FILLED);
+        const cv::Point center(cvRound(px.at(r.node).x), cvRound(px.at(r.node).y));
+        cv::rectangle(img, center - cv::Point(7, 7), center + cv::Point(7, 7),
+                      cv::Scalar(0, 0, 0), cv::FILLED);
         drawLabel(img, r.id + " " + r.name, center + cv::Point(10, -8), 0.4);
     }
+}
+
+// Un color por estado (§6.4: los estados tienen que distinguirse). OpenCV usa BGR, asi
+// que el primer numero es azul y el ultimo rojo.
+cv::Scalar courierColor(CourierState s) {
+    switch (s) {
+        case CourierState::idle:         return cv::Scalar(150, 150, 150);   // gris
+        case CourierState::toPickup:     return cv::Scalar(40, 200, 255);    // amarillo
+        case CourierState::atRestaurant: return cv::Scalar(0, 140, 255);     // naranja
+        case CourierState::toDropoff:    return cv::Scalar(60, 190, 60);     // verde
+        case CourierState::brokenDown:   return cv::Scalar(40, 40, 220);     // rojo
+    }
+    return cv::Scalar(255, 255, 255);
+}
+
+// La posicion del courier en pixeles, interpolada dentro del tramo que esta recorriendo.
+//
+// Aca esta el requisito del §2: el punto avanza de forma continua mientras el courier
+// anda, en vez de saltar de esquina en esquina. El courier no actualiza nada; anoto
+// cuando salio y cuando llega, y la posicion se deduce del reloj.
+cv::Point2f courierPixel(const Courier& view, const PixelMap& px, std::int64_t nowMs) {
+    const auto from = px.find(view.fromNode);
+    const auto to = px.find(view.toNode);
+    if (from == px.end()) {
+        return {0.0f, 0.0f};
+    }
+    if (to == px.end()) {
+        return from->second;
+    }
+    const float ratio = static_cast<float>(positionRatio(view, nowMs));
+    return from->second + (to->second - from->second) * ratio;
+}
+
+// Las entregas activas: una linea del courier a la puerta del cliente (§6.4).
+void drawActiveDeliveries(cv::Mat& img, const PixelMap& px, const SimContext& ctx,
+                          const std::vector<std::unique_ptr<CourierActor>>& fleet,
+                          std::int64_t nowMs) {
+    const cv::Scalar violeta(200, 80, 200);
+    for (const auto& actor : fleet) {
+        const Courier view = actor->snapshot();   // copia bajo candado
+        if (view.bag.empty()) {
+            continue;
+        }
+        const auto order = ctx.book.find(view.bag.front());
+        if (!order.has_value()) {
+            continue;
+        }
+        const auto dropoff = px.find(order->dropoffNode);
+        if (dropoff == px.end()) {
+            continue;
+        }
+        const cv::Point2f desde = courierPixel(view, px, nowMs);
+        const cv::Point destino(cvRound(dropoff->second.x), cvRound(dropoff->second.y));
+        cv::line(img, cv::Point(cvRound(desde.x), cvRound(desde.y)), destino, violeta, 1,
+                 cv::LINE_AA);
+        cv::circle(img, destino, 4, violeta, cv::FILLED, cv::LINE_AA);
+        cv::circle(img, destino, 4, cv::Scalar(0, 0, 0), 1, cv::LINE_AA);
+    }
+}
+
+void drawCouriers(cv::Mat& img, const PixelMap& px,
+                  const std::vector<std::unique_ptr<CourierActor>>& fleet,
+                  std::int64_t nowMs) {
+    const std::size_t total = fleet.size();
+    for (std::size_t i = 0; i < total; ++i) {
+        const Courier view = fleet[i]->snapshot();
+        const cv::Point2f pos = courierPixel(view, px, nowMs);
+
+        // Los couriers que estan quietos en el mismo nodo se superpondrian, asi que se
+        // abren en abanico. Solo afecta al dibujo: el dato sigue siendo el nodo.
+        const double angle = 2.0 * 3.14159265358979323846 * static_cast<double>(i) /
+                             static_cast<double>(total == 0 ? 1 : total);
+        const cv::Point center(cvRound(pos.x + 9.0 * std::cos(angle)),
+                               cvRound(pos.y + 9.0 * std::sin(angle)));
+
+        cv::circle(img, center, 6, courierColor(view.state), cv::FILLED, cv::LINE_AA);
+        cv::circle(img, center, 6, cv::Scalar(0, 0, 0), 1, cv::LINE_AA);
+    }
+}
+
+// Los contadores en vivo y la leyenda de colores (§6.4).
+void drawPanel(cv::Mat& img, const OrderStats& stats, std::int64_t nowMs,
+               const std::string& attribution) {
+    const int x = 10;
+    int y = 24;
+    drawLabel(img,
+              "t=" + std::to_string(nowMs / 1000) + "s  creadas " +
+                  std::to_string(stats.created) + "  entregadas " +
+                  std::to_string(stats.delivered) + "  rechazadas " +
+                  std::to_string(stats.rejected),
+              cv::Point(x, y), 0.5);
+    y += 22;
+    drawLabel(img,
+              "pendientes " + std::to_string(stats.pending) + "  averias " +
+                  std::to_string(stats.breakdowns) + "  reasignadas " +
+                  std::to_string(stats.reassigned) + "  media " +
+                  std::to_string(stats.avgDeliveryMs / 1000) + "s",
+              cv::Point(x, y), 0.5);
+
+    // Leyenda: el mismo color que usa cada estado en el mapa.
+    y += 26;
+    const struct {
+        CourierState state;
+        const char* name;
+    } legend[] = {{CourierState::idle, "libre"},
+                  {CourierState::toPickup, "al restaurante"},
+                  {CourierState::atRestaurant, "esperando turno"},
+                  {CourierState::toDropoff, "entregando"},
+                  {CourierState::brokenDown, "averiado"}};
+    int lx = x;
+    for (const auto& item : legend) {
+        cv::circle(img, cv::Point(lx + 6, y - 4), 5, courierColor(item.state), cv::FILLED,
+                   cv::LINE_AA);
+        cv::circle(img, cv::Point(lx + 6, y - 4), 5, cv::Scalar(0, 0, 0), 1, cv::LINE_AA);
+        drawLabel(img, item.name, cv::Point(lx + 16, y), 0.38);
+        lx += 16 + 8 * static_cast<int>(std::strlen(item.name)) + 14;
+    }
+
+    drawLabel(img, drawableText(attribution), cv::Point(x, img.rows - 10), 0.45);
 }
 
 }  // namespace
@@ -192,16 +320,17 @@ int main(int argc, char** argv) {
         cv::resize(image, image, cv::Size(), scale, scale, cv::INTER_AREA);
     }
 
-    // Dos fondos precalculados: con y sin el grafo (tecla G)
+    // Dos capas. El FONDO -mapa, calles y restaurantes- se dibuja una sola vez, porque
+    // no cambia nunca. Lo que se mueve se dibuja encima, en cada cuadro, sobre una copia.
+    //
+    // Sin esa separacion habria que repintar 1027 calles treinta veces por segundo para
+    // mover ocho puntos.
+    const PixelMap px = buildPixelMap(cfg, image.size());
+
     cv::Mat withGraph = image.clone();
-    drawGraph(withGraph, cfg);
-    for (cv::Mat* frame : {&image, &withGraph}) {
-        drawRestaurants(*frame, cfg);
-        drawLabel(*frame,
-                  std::to_string(cfg.nodes.size()) + " nodos, " + std::to_string(cfg.streets.size()) +
-                      " calles, " + std::to_string(cfg.restaurants.size()) + " restaurantes  [G: grafo]",
-                  cv::Point(10, 22), 0.5);
-        drawLabel(*frame, drawableText(cfg.attribution), cv::Point(10, frame->rows - 10), 0.45);
+    drawGraph(withGraph, cfg, px);
+    for (cv::Mat* background : {&image, &withGraph}) {
+        drawRestaurants(*background, cfg, px);
     }
 
     const std::string windowName = "Equipetrol Delivery";
@@ -260,7 +389,6 @@ int main(int argc, char** argv) {
     std::thread generatorThread(&OrderGenerator::run, &generator);
 
     cv::namedWindow(windowName, cv::WINDOW_AUTOSIZE);
-    cv::imshow(windowName, withGraph);
     std::cout << "Simulation has started..." << std::endl;
 
     std::signal(SIGINT, onStopSignal);
@@ -269,8 +397,17 @@ int main(int argc, char** argv) {
     // durationS esta en segundos SIMULADOS. Con 0 corre hasta recibir una señal.
     const std::int64_t durationMs = cfg.durationS * 1000;
 
+    cv::Mat frame;
     while (true) {
-        cv::imshow(windowName, showGraph ? withGraph : image);
+        // copyTo y no clone(): reutiliza el buffer de frame en vez de pedir 4 MB al
+        // sistema treinta veces por segundo. Por eso frame se declara FUERA del bucle.
+        (showGraph ? withGraph : image).copyTo(frame);
+
+        const std::int64_t nowMs = clock.nowMs();
+        drawActiveDeliveries(frame, px, ctx, fleet, nowMs);
+        drawCouriers(frame, px, fleet, nowMs);
+        drawPanel(frame, book.stats(), nowMs, cfg.attribution);
+        cv::imshow(windowName, frame);
         const int key = cv::waitKey(kFrameMs);
         if (key == kEscKey) {
             break;
