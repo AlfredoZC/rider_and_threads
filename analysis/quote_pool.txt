@@ -42,3 +42,40 @@ depender de cuantos candidatos haya y de la suerte del planificador.
   8 tareas de 100 ms con 4 trabajadores ... 200 ms, maximo simultaneo 4
   (secuencialmente habrian sido 800 ms)
   stop() con 30 tareas en vuelo ........... las 30 respondieron, en 51 ms
+
+
+=== Repeticion con datos crudos guardados (experimento 6 del README) ===
+
+La medicion de arriba es de una sola corrida por columna. Al generar los datos crudos que
+pide el §13 se repitio con tres corridas por columna, alternando las dos versiones para que
+vieran la misma maquina. Configuracion experiments/exp6_pool_64_couriers.json, 64 couriers,
+semilla 42. Los logs y resumenes estan en experiments/exp6_sin_pool_r1..r3 y
+experiments/exp6_con_pool_r1..r3.
+
+El binario "sin pool" se construyo desde el commit d912b69, donde el QuotePool ya existe
+pero el dispatcher todavia usa std::async por estimacion.
+
+                              sin pool                     con pool
+  pico de hilos vivos ....... 75  78  75  -> 76.0          75  75  75  -> 75.0
+  CPU de sistema ............ 1.13 0.70 0.72 -> 0.85 s     0.49 0.42 0.48 -> 0.46 s  (-46 %)
+  CPU de usuario ............ 5.84 7.09 7.81 -> 6.91 s     8.84 8.16 8.44 -> 8.48 s
+  entregadas ................ 474 530 573 -> 526           573 580 581 -> 578
+
+Medido con /usr/bin/time -v. El pico de hilos se obtuvo muestreando /proc/<pid>/status cada
+50 ms mientras el proceso vivia.
+
+Tres lecturas:
+
+  El pico de hilos es el MISMO con pool y sin pool, 76 contra 75. La prediccion de que con
+  64 couriers habria decenas de hilos vivos por orden era falsa: las estimaciones duran
+  microsegundos, asi que los hilos nacen y mueren antes de acumularse.
+
+  El CPU de sistema baja a la mitad, y es la unica cifra con los rangos disjuntos
+  (0.70-1.13 contra 0.42-0.49). Ahi vive el costo de pedirle al nucleo un hilo nuevo y
+  devolverlo, miles de veces.
+
+  El CPU de usuario SUBE, de 6.91 s a 8.48 s. No es una regresion: el programa entrega un
+  10 % mas de ordenes y cada entrega activa se dibuja treinta veces por segundo. Se paga mas
+  trabajo de usuario porque se hace mas trabajo util.
+
+Las dos corridas r1 pasaron el validador: TODO CORRECTO.

@@ -46,3 +46,44 @@ pero el validador del log lo rechazo por dos motivos:
 El modelo del enunciado es claro al respecto: orderReassigned lleva from y to, los
 dos ids de courier, asi que las ordenes de un averiado van a otro courier. Se
 revirtio.
+
+
+=== Datos crudos de la variante descartada (experimento 3 del README) ===
+
+La variante que devolvia a la cola las ordenes no retiradas, en vez de traspasarlas, nunca
+se commiteo: se midio, se vio que rompia el §6 y se descarto. Para tener el dato crudo se
+reconstruyo a mano sobre el codigo entregado y se corrio con la misma configuracion que la
+linea de base, experiments/exp5_averias_flota_8.json: 8 couriers, probabilidad 0.6,
+semilla 42.
+
+                                 codigo entregado    variante descartada
+  averias concretadas .......... 2                   8
+  traspasos (orderReassigned) .. 2                   0
+  ordenes retiradas ............ 59                  10
+  entregadas ................... 56                  10
+  rechazadas ................... 1516                1432
+
+Logs en experiments/exp5_averias_flota_8.log y experiments/exp3_devolver_a_la_cola.log.
+
+El validador rechaza el log de la variante, que es la razon por la que se descarto:
+
+  linea 1134: o271 pasa de assigned a rejected, que no es legal
+  linea 1136: o272 pasa de assigned a rejected, que no es legal
+
+La orden vuelve a la cola sin ningun evento que lo registre, asi que para el log sigue
+assigned; cuando despues vence acceptTimeoutMs se la rechaza, y la transicion que queda
+escrita es assigned -> rejected.
+
+Al repetir la medicion aparecieron dos razones que la primera vez no se vieron, y son
+peores que la del log:
+
+  Los traspasos pasan de 2 a CERO. Si las ordenes no retiradas se devuelven, lo unico que
+  queda para traspasar es comida ya retirada, y casi nunca hay. La variante no mejora el
+  camino del scoped_lock: lo elimina. Y ese camino es justo lo que el §4 pide ejercitar.
+
+  Las entregas caen de 56 a 10. Las ocho averias son los ocho couriers de la flota: todos
+  quedan fuera de servicio y el sistema deja de repartir.
+
+Visto asi, la metrica que "mejoraba" era un espejismo. Mas averias concretadas solo era
+mejor si servian para ejercitar el traspaso, y lo que hacian era vaciar la flota sin
+traspasar nada.
