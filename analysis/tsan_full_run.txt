@@ -1,0 +1,165 @@
+ThreadSanitizer sobre el programa completo
+==========================================
+
+Las dos corridas anteriores (tsan_event_log.txt y tsan_courier_actor.txt) analizan un
+monitor por vez, con una prueba que lo castiga a proposito. Esta analiza el programa
+entero: el hilo principal, 16 couriers, el generador, el dispatcher, los trabajadores del
+pool, y las averias traspasandose ordenes entre couriers.
+
+Herramienta y version
+---------------------
+ThreadSanitizer de GCC, g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, sobre Ubuntu 24.04
+en WSL2. Es la misma version con la que se hicieron los otros analisis.
+
+Como se corre
+-------------
+    mkdir build && cd build
+    cmake -DENABLE_TSAN=ON .. && make
+    cd ..
+    TSAN_OPTIONS="halt_on_error=0 history_size=4" \
+      setarch "$(uname -m)" -R ./build/delivery_sim cfg.json --log run.log --no-window
+
+Tres cosas que no son obvias:
+
+  setarch -R desactiva la aleatorizacion de direcciones. Sin eso el binario
+  instrumentado segfaulta en esta maquina, por un conflicto conocido entre el mapa de
+  memoria de ThreadSanitizer y el rango de aleatorizacion de los nucleos recientes.
+
+  halt_on_error=0 hace que la corrida siga despues del primer reporte, en vez de abortar.
+  Interesa el listado completo, no el primero que aparezca.
+
+  --no-window corre la simulacion completa -se arma cada cuadro, asi que el codigo de
+  dibujo tambien queda bajo analisis- pero no abre la ventana. El motivo esta mas abajo,
+  y es el punto mas importante de este archivo.
+
+Carga
+-----
+Configuracion experiments/exp5_averias_flota_16.json: 16 couriers, rafagas de hasta 12
+ordenes, breakdownProbability 0.6, 90 minutos simulados a timeScale 300. Se eligio esa y
+no la de por defecto porque es la que concreta averias (ver el experimento 5 del README):
+con la flota de 8 saturada, el traspaso todo-o-nada casi nunca encuentra receptor y el
+std::scoped_lock de la averia no se ejercita nunca.
+
+Bajo instrumentacion todo corre entre cinco y diez veces mas lento, por lo que las cifras
+de entregas no se comparan con las de una corrida normal.
+
+Resultado, sin ventana
+----------------------
+    exit=0
+    reportes de ThreadSanitizer = 0
+    eventos en el log = 3234
+    averias concretadas = 5
+
+Cero reportes y codigo de salida 0. El codigo de salida importa: ThreadSanitizer termina
+con 66 cuando encontro algo, incluso con halt_on_error=0, asi que un 0 es por si mismo la
+confirmacion de que no reporto nada.
+
+La salida cruda, que es un archivo vacio, esta en tsan_full_run_sin_ventana.err.
+
+Resultado, con ventana
+----------------------
+    exit=66
+    reportes de ThreadSanitizer = 5
+    frames en delivery_sim = 0
+    rutas bajo nuestro src/ = 0
+
+Cinco reportes, y NINGUNO toca nuestro codigo. Los cinco ocurren por completo dentro de
+libQt5Core, libdbus-1, libc y los interceptores de libtsan. La salida cruda esta en
+tsan_full_run_con_ventana.err y los cinco encabezados son:
+
+  data race en memcpy, interceptado por el sanitizer, con todos los marcos en libQt5Core
+  data race en libQt5Core.so.5+0x2dfae2
+  data race en operator delete, con los marcos en libQt5Core
+  data race en libdbus-1.so.3+0x1115b
+  lock-order-inversion en libdbus-1.so.3+0x13a74
+
+El origen es siempre el mismo: Qt arranca sus propios hilos para la ventana -uno de ellos
+se llama QDBusConnection y aparece por nombre en los reportes- y habla con el escritorio
+por dbus. Son hilos que este programa no crea, sincronizados por codigo que este programa
+no escribio.
+
+Como se comprobo que ninguno es nuestro:
+
+    grep -c delivery_sim run_window.err          -> 0
+    grep -oE "[^ /]*src/[A-Za-z]+\.(cpp|h)" ...  -> sin resultados
+
+La segunda busqueda hace falta porque la ingenua no sirve: los marcos del propio
+sanitizer traen rutas como ../../../../src/libsanitizer/tsan/..., asi que buscar "src/"
+a secas da falsos positivos, y buscar "main." calza con libc_start_call_main.h. Con el
+patron correcto, ni un solo marco de los cinco reportes esta en nuestro binario.
+
+Por que no se suprimen esos cinco
+---------------------------------
+Se intento y se descarto, y la razon es la parte interesante.
+
+libdbus y libglib vienen sin simbolos en este sistema: sus marcos salen como
+"<null> <null> (libdbus-1.so.3+0x34c8b)". Sin nombre de funcion no hay nada que poner en
+una supresion del tipo race:<funcion>, asi que la unica forma seria called_from_lib sobre
+la libreria entera.
+
+Suprimir librerias enteras funciona, pero mide mal. Primero porque taparia tambien una
+carrera nuestra que pasara por ellas, que es exactamente lo que el analisis tiene que
+poder ver. Y segundo, comprobado: al suprimir libdbus aparecio libglib, al suprimir
+libglib aparecieron libQt5DBus, libQt5XcbQpa y libxcb. Es la pila grafica entera. Dejar
+el reporte en blanco a fuerza de tapar media docena de librerias no demuestra nada sobre
+este programa.
+
+La corrida que vale es la de --no-window, donde esas librerias no participan y lo que
+queda bajo analisis es exactamente la concurrencia de este programa. La corrida con
+ventana queda documentada aca, con sus cinco reportes y la comprobacion de que ninguno es
+nuestro.
+
+Las dos unicas supresiones
+--------------------------
+Sin ventana, antes de suprimir nada, salian dos avisos de orden de candados de GDAL,
+dentro de cv::imread, en el hilo principal y antes de que exista un solo hilo de la
+simulacion. Esos SI estan simbolizados, asi que se suprimen por funcion y no por libreria,
+en src/TsanSuppressions.cpp:
+
+    deadlock:CPLAcquireMutex
+    deadlock:CPLCreateOrAcquireMutexEx
+    race:CPLCreateOrAcquireMutexEx
+
+Van embebidas en el binario, por __tsan_default_suppressions(), y no en un archivo aparte,
+porque el enunciado exige que compilar sea "cmake .. && make" y nada mas: pedirle al
+revisor que ademas exporte TSAN_OPTIONS=suppressions=... seria un paso que nadie le dijo
+que hiciera, y sin el obtendria un resultado distinto a este.
+
+Nombrar las funciones y no la libreria no es un detalle de estilo: con
+called_from_lib:libgdal.so, una carrera nuestra que pasara por GDAL quedaria tapada.
+
+Lo que esta corrida encontro
+----------------------------
+Cero carreras, pero no cero defectos. El validador del log (tools/validate_log.py) sobre
+el log de esta misma corrida rechazo una linea de 3396:
+
+    linea 61: o22 pasa de assigned a assigned, que no es legal
+
+La secuencia, del log:
+
+    t=113343  orderAssigned     o23  c11
+    t=113405  courierBreakdown       c11
+    t=113602  orderReassigned   o23  from c11 to c12
+    t=113649  orderAssigned     o22  c11
+    t=114191  orderAssigned     o22  c12
+
+El dispatcher registraba la asignacion en el libro y despues le entregaba la orden al
+courier. Entre un paso y el otro pasan hasta quoteTimeoutMs, y en ese rato el courier
+puede llenarse o averiarse: la entrega fallaba con orderAssigned ya escrito, la orden
+volvia a la cola, y el §6 no tiene ningun evento que represente ese paso atras. La
+proxima asignacion escribia orderAssigned otra vez.
+
+Se corrigio invirtiendo el orden, en una reserva de dos fases: primero se pide lugar al
+courier (CourierActor::reserve), despues se registra en el libro, y solo si las dos cosas
+salen bien se confirma (commitReservation). El unico camino de salida que queda sin
+escribir nada es el de la reserva rechazada, y entonces la orden simplemente espera la
+vuelta siguiente. Los candados nunca se toman a la vez, asi que la jerarquia del §8 queda
+intacta.
+
+Despues del arreglo, las cuatro corridas de experiments/ se regeneraron y el validador
+devuelve TODO CORRECTO en las cuatro.
+
+Vale la pena anotar que ni las 17 pruebas unitarias ni ThreadSanitizer vieron esto. No era
+una carrera de datos: los dos accesos estaban correctamente sincronizados. Era una
+secuencia de estados invalida, y para eso hace falta releer el log con una implementacion
+independiente de las reglas.
