@@ -108,6 +108,10 @@ ventana se abre, que es lo que pide el §2 del enunciado.
 - **stdout:** `Simulation has started...` cuando la simulación está lista y corriendo; al final, una única línea
   JSON con el resumen (`created`, `delivered`, `rejected`, `pending`, `reassigned`, `breakdowns`,
   `avgDeliveryMs`, `maxDeliveryMs`, `deliveredPerCourier`).
+> **Sobre el rechazo `unreachable`:** con `config/equipetrol.json` no puede ocurrir, porque el
+> grafo del mapa real es fuertemente conexo —desde cada restaurante se llega a los 668 nodos—.
+> Para ejercitarlo hace falta un grafo con nodos aislados, como `config/tests/unreachable.json`.
+
 - **Log de eventos:** un objeto JSON por línea (`orderCreated`, `orderAssigned`, `pickupStarted`,
   `orderPickedUp`, `orderDelivered`, `orderRejected`, `courierBreakdown`, `orderReassigned`,
   `simulationStopping`).
@@ -970,6 +974,115 @@ una línea de 3396 de este mismo log, y era un defecto real del dispatcher. Est�
 de abajo. El detalle completo, con los cinco reportes y las comprobaciones, en
 `analysis/tsan_full_run.txt`.
 
+### Las pruebas con la CPU saturada
+
+El §11 avisa que *"los defectos que aparecen sólo a veces son defectos"*. Ese criterio vale
+también para las pruebas: una que falla a veces es tan mala como un programa que falla a
+veces, porque no se pueden distinguir. La batería se corre entonces con tantos quemadores de
+CPU como núcleos:
+
+```
+nucleos=$(nproc)
+for i in $(seq 1 "$nucleos"); do ( while :; do :; done ) & done
+bash tests/run.sh
+```
+
+| | |
+|---|---|
+| 17 pruebas, máquina libre | **TODAS LAS PRUEBAS PASARON** |
+| 17 pruebas, 6 quemadores de CPU | **TODAS LAS PRUEBAS PASARON** |
+
+Esa corrida encontró **una prueba mal escrita**, no un defecto del programa: `test_render`
+exigía que la posición del courier no avanzara más de media cuadra entre dos muestras
+tomadas cada 10 ms. Eso no mide el programa, mide la puntualidad del muestreador: la
+posición se deduce del reloj, así que si el bucle que mira se despierta tarde, el avance
+legítimo supera media cuadra sin que haya ningún defecto. La constante salió de la máquina
+donde se escribió la prueba.
+
+Ahora se compara contra **lo que el tiempo explica** —el avance esperado es
+`Δt / duración del tramo`, así que crece junto con la demora— y se agregó la aserción que en
+realidad descarta el defecto que el §2 prohíbe:
+
+```cpp
+assert(intermedios > 10);   // muestras con 0.05 < ratio < 0.95
+```
+
+Un punto que salta de esquina en esquina **nunca está entre dos esquinas**. Bajo carga da
+264 de 297 muestras, y ninguna carga de CPU puede hacerla fallar. El detalle, con las otras
+dos aserciones que dependían del hardware y se corrigieron por el mismo motivo, está en
+`analysis/pruebas_bajo_carga.txt`.
+
+### Los escenarios con los que el enunciado dice que se va a probar
+
+El §11 del enunciado enumera las configuraciones que van a usar los revisores. Están todas
+en `config/tests/`, para poder correrlas sin armarlas a mano:
+
+| escenario | archivo |
+|---|---|
+| una chica | `small.json` |
+| una grande: 64 couriers, tasa de órdenes altísima | `../../experiments/exp6_pool_64_couriers.json` |
+| ráfagas grandes en el mismo instante | `bursts_same_instant.json` |
+| un solo lugar de retiro en todos los restaurantes | `../../experiments/exp4_un_solo_slot.json` |
+| bolsa de capacidad 1 | `bag_capacity_1.json` |
+| probabilidad de avería 1 | `breakdown_always.json` |
+| destinos inalcanzables | `unreachable.json` |
+| varias inválidas | `invalid_*.json`, doce en total |
+
+Cada una corrida tres veces, porque el §11 avisa que *"los defectos que aparecen sólo a
+veces son defectos"*:
+
+```
+bag_capacity_1       r1 r2 r3   exit=0, validador TODO CORRECTO
+breakdown_always     r1 r2 r3   exit=0, validador TODO CORRECTO
+bursts_same_instant  r1 r2 r3   exit=0, validador TODO CORRECTO
+unreachable          r1 r2 r3   exit=0, validador TODO CORRECTO
+small                r1 r2 r3   exit=0, validador TODO CORRECTO
+```
+
+Lo que cada uno provoca de verdad: `bursts_same_instant` crea **4042 órdenes** y las rechaza
+todas por `queueFull` con `pending` clavado en el `maxPending` configurado;
+`breakdown_always` agota la flota con averías y traspasos y el programa sigue respondiendo y
+cierra con 0; `bag_capacity_1` fuerza que el traspaso sólo pueda ocurrir hacia un courier
+vacío.
+
+#### El escenario de destinos inalcanzables encontró un defecto
+
+`unreachable.json` no usa el mapa real: tiene un grafo de seis nodos hecho a mano, donde `x`
+no tiene ninguna calle y `y` no tiene calles de entrada. Eso hace falta porque **el grafo
+oficial es fuertemente conexo**: desde cada uno de sus seis restaurantes se llega a los 668
+nodos, así que con la configuración de entrega el rechazo `unreachable` no puede ocurrir
+nunca y el camino quedaba sin ejercitar.
+
+Con el grafo chico, el resultado fue éste:
+
+```
+rechazos: {'queueFull': 108, 'noCourier': 151}
+```
+
+**Cero `unreachable`**, contra el §4, que dice que una orden cuyo destino no se puede alcanzar
+por la red de calles se rechaza con esa razón. La causa: `unreachable` sólo se emitía cuando
+un courier no podía llegar **al restaurante**. Cuando el destino era el inalcanzable, las
+estimaciones de todos los candidatos volvían `kUnreachable`, el dispatcher no encontraba a
+quién asignarla, y la orden se reintentaba hasta vencer su `acceptTimeoutMs`: terminaba
+rechazada como `noCourier`.
+
+**El validador no lo detectaba**, y el motivo vale la pena: `assigned → rejected` es una
+transición legal y los contadores cuadraban. El log era internamente consistente; lo que
+estaba mal era la razón, y para verlo hay que comparar contra el mundo, no contra el log.
+
+El arreglo está en `Dispatcher::destinoInalcanzable`: una consulta de alcanzabilidad del
+restaurante al destino, **una sola vez por orden y antes de cotizar**. La pregunta correcta es
+sobre el grafo y no sobre los couriers —entre dos nodos hay camino o no hay, y eso no cambia
+con el tiempo ni con dónde esté cada moto—, así que hacerla por candidato habría dado la misma
+respuesta ocho veces. Después del arreglo, el mismo escenario da:
+
+```
+rechazos: {'unreachable': 125, 'queueFull': 40, 'noCourier': 107}
+```
+
+Los `noCourier` que quedan son legítimos: órdenes con destino alcanzable que ningún courier
+tomó dentro del plazo, con tres couriers y un solo lugar de retiro.
+
 ### AddressSanitizer
 
 ```
@@ -1016,6 +1129,11 @@ detectado, y además es lo que rechazó la variante del experimento 3:
 4. La variante del experimento 3 dejaba el log con una orden pasando de `assigned` a
    `rejected`, porque volvía a la cola sin ningún evento que lo registrara y después vencía
    su plazo de aceptación.
+
+Y uno que el validador **no** pudo encontrar, porque no era un log mal formado: los destinos
+inalcanzables se rechazaban con `noCourier` en vez de `unreachable`. El log era internamente
+consistente y los contadores cuadraban; lo que estaba mal era la razón. Lo encontró el
+escenario `config/tests/unreachable.json`, descrito arriba.
 
 ### Una magnitud que no se sostuvo al repetir las corridas
 
