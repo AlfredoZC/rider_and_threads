@@ -1,0 +1,118 @@
+Las pruebas corridas con la CPU saturada
+========================================
+
+Por que esta corrida existe
+---------------------------
+El §11 del enunciado dice que cada escenario se corre muchas veces y que "un solo
+cuelgue en cualquier corrida falla el criterio: los defectos que aparecen solo a veces
+son defectos". Ese criterio se aplica tambien a las pruebas: una prueba que falla a veces
+es tan mala como un programa que falla a veces, porque no se puede distinguir una de la
+otra.
+
+La bateria completa paso en limpio muchas veces. Corriendola en paralelo con otras tareas
+pesadas, fallo una. Eso bastaba para investigarlo.
+
+Como se reproduce
+-----------------
+    nucleos=$(nproc)
+    for i in $(seq 1 "$nucleos"); do ( while :; do :; done ) & done
+    bash tests/run.sh
+    kill %1 %2 %3 ...
+
+Son tantos quemadores de CPU como nucleos tenga la maquina, de modo que las pruebas
+compiten por el procesador con algo mas. En esta maquina, 6 nucleos.
+
+Lo que se encontro, y no era un flake
+-------------------------------------
+    test_render: tests/test_render.cpp:99: int main():
+    Assertion `saltosGrandes == 0' failed.
+
+La prueba muestreaba la posicion del courier cada 10 ms y exigia que, dentro de un mismo
+tramo, el avance entre dos muestras consecutivas nunca pasara de media cuadra:
+
+    if (ratios[i] - ratios[i - 1] > 0.5) ++saltosGrandes;
+    assert(saltosGrandes == 0);
+
+Eso no mide el programa: mide la puntualidad del muestreador. La posicion se deduce del
+reloj -el courier no actualiza nada, solo anota cuando salio y cuando llega-, asi que si
+el bucle que mira se despierta tarde, el tiempo simulado avanzo igual y el avance
+legitimo entre dos muestras puede pasar de media cuadra sin que haya ningun defecto. Con
+la maquina libre el bucle cumple los 10 ms y la prueba pasa; con la CPU saturada no, y
+falla.
+
+Es el mismo error de razonamiento que un umbral de velocidad en una prueba de
+comportamiento: la constante 0.5 salio de la maquina donde se escribio la prueba.
+
+El arreglo
+----------
+La propiedad de verdad es que la posicion sea una FUNCION CONTINUA DEL TIEMPO: el avance
+tiene que ser el que corresponde al rato que paso, ni mas ni menos. Ahora de cada muestra
+se guarda tambien el instante simulado y la duracion del tramo, y la comparacion es
+contra lo que el tiempo explica:
+
+    const double esperado = double(dt) / double(duracion);
+    if (muestras[i].ratio - muestras[i-1].ratio > esperado + 0.05) ++saltosInexplicables;
+
+Si la muestra llega tarde, el avance esperado crece con ella y la comparacion sigue
+valiendo. El umbral dejo de ser una constante escrita a mano.
+
+Y se agrego la asercion que en realidad descarta el defecto del §2
+------------------------------------------------------------------
+El §2 dice que "un punto que salta de esquina en esquina, o que esta quieto mientras el
+log dice que el courier anda, es un defecto". La asercion vieja lo cubria de refilon: un
+punto que salta de esquina en esquina tiene ratio 0 o 1, y el salto de 0 a 1 solo se
+detectaba si las dos muestras caian en el mismo tramo.
+
+La nueva lo dice directamente:
+
+    assert(intermedios > 10);   // muestras con 0.05 < ratio < 0.95
+
+Un punto que salta de esquina en esquina nunca esta entre dos esquinas, asi que
+intermedios seria cero. Es una afirmacion sobre el programa, no sobre el reloj de quien
+lo mira, y no hay carga de CPU que la haga fallar.
+
+Otras dos aserciones que dependian del hardware
+-----------------------------------------------
+Buscando casos parecidos aparecieron dos mas. Las dos se arreglaron aunque no habian
+fallado todavia, porque el problema es el mismo.
+
+  test_dispatcher, la prueba del paralelismo:  assert(ms < 600)
+
+  Son ocho estimaciones de 100 ms sobre un pool con tantos trabajadores como nucleos. En
+  esta maquina, con 6 trabajadores, dan 203 ms. Con 2 nucleos serian 4 tandas y unos 400
+  ms legitimos, cerca del limite; con 1 nucleo no hay paralelismo posible y la prueba NO
+  PUEDE PASAR NUNCA. Un umbral fijo ahi mide el hardware del revisor.
+
+  Ahora el umbral se calcula con dispatcher.quoteWorkers(), y lo que se afirma es lo
+  correcto aunque mas debil: que no fueron una tras otra (ms < 8 * 100) y que el tiempo
+  se parece al que permite la cantidad de trabajadores. Con un solo nucleo informa que no
+  hay paralelismo que medir, en vez de fallar.
+
+  test_order_book, la espera con una orden ya lista:  assert(ms < 50)
+
+  Lo que se afirma es que waitForUnassigned NO espero el plazo de 5 segundos, no un
+  presupuesto de latencia de 50 ms. Con la maquina cargada, 50 ms convierte una prueba de
+  comportamiento en una de velocidad. Quedo en 1000 ms, que sigue probando lo mismo.
+
+Resultado despues del arreglo
+-----------------------------
+    17 pruebas, maquina libre          TODAS LAS PRUEBAS PASARON
+    17 pruebas, 6 quemadores de CPU    TODAS LAS PRUEBAS PASARON
+
+Mediciones bajo carga, para que se vea que las aserciones no quedaron vacias:
+
+    8 estimaciones de 100 ms: 200 ms con 6 trabajadores, hasta 6 a la vez
+    con plazo de 150 ms asigno en 155 ms, descartando 3 estimaciones tardias
+    esperar 300 ms sin trabajo consumio 0.033 ms de CPU
+    admit() desperto al dispatcher en 103 ms (el plazo era 10000)
+    12 couriers contra 2 slots: maximo simultaneo observado 2
+    orden de llegada 1,2,3,4,5 -> orden de entrada 12345
+
+Y la prueba que habia fallado, con la misma carga:
+
+    297 muestras con el courier en movimiento
+    avances dentro de un tramo: 269 crecientes, 0 mayores que lo que explica el tiempo
+    264 muestras con el punto ENTRE dos esquinas, no sobre una
+
+Las 264 son la evidencia que importa: de 297 muestras, 264 tienen el punto estrictamente
+entre dos esquinas. Un dibujo que saltara de esquina en esquina daria cero.

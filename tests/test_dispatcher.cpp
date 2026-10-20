@@ -147,11 +147,37 @@ int main() {
         dispatcher.requestStop();
         worker.join();
 
-        std::cout << "  8 estimaciones de 100 ms tardaron " << ms
-                  << " ms en total; hubo hasta " << maxConcurrent.load()
+        const std::size_t trabajadores = dispatcher.quoteWorkers();
+        std::cout << "  8 estimaciones de 100 ms tardaron " << ms << " ms en total con "
+                  << trabajadores << " trabajadores; hubo hasta " << maxConcurrent.load()
                   << " corriendo a la vez\n";
-        assert(maxConcurrent.load() >= 2);   // de verdad simultaneas
-        assert(ms < 600);                    // secuencialmente habrian sido ~800
+
+        // El umbral se calcula, no se escribe a mano.
+        //
+        // Antes era un assert(ms < 600), y eso es una prueba que falla en una maquina
+        // distinta de la que la escribio: con dos nucleos el pool tiene dos trabajadores,
+        // las ocho estimaciones van en cuatro tandas de 100 ms y el total legitimo ronda
+        // los 400; con un solo nucleo no hay paralelismo que medir y la prueba no puede
+        // pasar nunca. Un umbral fijo mide el hardware del revisor, no el programa.
+        //
+        // Lo que se afirma de verdad es mas debil y mas correcto: que NO fueron una tras
+        // otra, y que el tiempo se parece al que permite la cantidad de trabajadores.
+        const std::int64_t kTareas = 8;
+        const std::int64_t kDuracionMs = 100;
+        const std::int64_t secuencial = kTareas * kDuracionMs;
+
+        if (trabajadores < 2) {
+            std::cout << "  (una sola CPU disponible: no hay paralelismo que medir)\n";
+        } else {
+            const std::int64_t tandas =
+                (kTareas + static_cast<std::int64_t>(trabajadores) - 1) /
+                static_cast<std::int64_t>(trabajadores);
+            assert(maxConcurrent.load() >= 2);     // de verdad simultaneas
+            assert(ms < secuencial);               // no fueron una tras otra
+            // El margen cubre el arranque de los hilos y la espera del dispatcher. La
+            // afirmacion fuerte es la de arriba.
+            assert(ms < tandas * kDuracionMs + 500);
+        }
     }
 
     // --- el plazo se respeta, y esperar no bloquea de mas
@@ -266,6 +292,57 @@ int main() {
         const OrderStats s = book.stats();
         assert(s.created == s.delivered + s.rejected + s.pending);
         std::cout << "  sin couriers disponibles rechaza con noCourier\n";
+    }
+
+    // --- un destino al que no se puede llegar se rechaza con unreachable (§4)
+    //
+    // El plazo de aceptacion se deja ENORME a proposito. Si se rechazara por vencimiento
+    // la razon seria noCourier, que es justamente el defecto que esta prueba cubre: antes
+    // de la comprobacion de alcanzabilidad, un destino inalcanzable hacia que todas las
+    // estimaciones volvieran kUnreachable, el dispatcher reintentaba, y la orden
+    // terminaba rechazada con la razon equivocada.
+    //
+    // El grafo oficial no sirve para esto: desde cualquiera de sus seis restaurantes se
+    // llega a los 668 nodos. Hace falta el grafo chico de config/tests/unreachable.json,
+    // donde el nodo "x" no tiene ninguna calle y el nodo "y" no tiene calles de entrada.
+    {
+        Config sinSalida = loadConfig("config/tests/unreachable.json");
+        const CityGraph grafoChico(sinSalida);
+        const SimClock clock(1.0);
+        EventLog log("tests/bin/disp_unreachable.log", clock);
+        OrderBook book(50, clock, log);
+        Restaurants restaurants;
+        for (const RestaurantConfig& r : sinSalida.restaurants) {
+            restaurants.emplace(r.id,
+                                std::make_unique<Restaurant>(r.id, r.pickupSlots));
+        }
+        const SimContext ctx{grafoChico, clock, log, book, restaurants};
+
+        std::vector<std::unique_ptr<CourierActor>> fleet;
+        fleet.push_back(std::make_unique<CourierActor>(1, "a", 3, ctx));
+
+        sinSalida.acceptTimeoutMs = 3600000;   // una hora: no puede vencer
+        Dispatcher dispatcher(sinSalida, ctx, fleet);
+
+        assert(book.admit(makeOrder(1, "a", "x")));   // "x" no tiene ninguna calle
+        assert(book.admit(makeOrder(2, "a", "y")));   // "y" no tiene calles de entrada
+        assert(book.admit(makeOrder(3, "a", "b")));   // esta si se puede: control positivo
+
+        std::thread worker(&Dispatcher::run, &dispatcher);
+        assert(waitUntil([&] {
+            return book.find(1)->state == OrderState::rejected &&
+                   book.find(2)->state == OrderState::rejected;
+        }, 3000));
+        dispatcher.requestStop();
+        worker.join();
+
+        assert(book.find(1)->rejectReason == RejectReason::unreachable);
+        assert(book.find(2)->rejectReason == RejectReason::unreachable);
+        // El control positivo importa: si la comprobacion rechazara todo, las dos
+        // aserciones de arriba pasarian igual y la prueba no probaria nada.
+        assert(book.find(3)->state != OrderState::rejected);
+        std::cout << "  un destino inalcanzable se rechaza con unreachable, y uno"
+                     " alcanzable no\n";
     }
 
     std::cout << "  dispatcher ok\n";

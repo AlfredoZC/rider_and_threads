@@ -57,20 +57,29 @@ int main() {
 
     std::thread worker(&CourierActor::run, &courier);
 
-    // Se muestrea la posicion mientras viaja, como haria el renderer.
-    std::vector<double> ratios;
-    std::vector<std::string> tramos;
+    // Se muestrea la posicion mientras viaja, como haria el renderer. De cada muestra se
+    // guarda tambien el instante y la duracion del tramo, porque el avance esperado
+    // depende de los dos: sin eso no se puede distinguir un salto del programa de una
+    // muestra que llego tarde.
+    struct Muestra {
+        double ratio;
+        std::string tramo;
+        std::int64_t simMs;        // instante simulado en que se tomo
+        std::int64_t duracionMs;   // cuanto dura el tramo completo
+    };
+    std::vector<Muestra> muestras;
     int muestrasEnMovimiento = 0;
     const auto t0 = std::chrono::steady_clock::now();
     while (std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::steady_clock::now() - t0).count() < 3000) {
         const Courier view = courier.snapshot();
-        const double r = ratioDe(view, clock.nowMs());
+        const std::int64_t ahora = clock.nowMs();
+        const double r = ratioDe(view, ahora);
         assert(r >= 0.0 && r <= 1.0);          // siempre acotado: nunca se pasa del nodo
         if (view.fromNode != view.toNode) {
             ++muestrasEnMovimiento;
-            ratios.push_back(r);
-            tramos.push_back(view.fromNode + ">" + view.toNode);
+            muestras.push_back(Muestra{r, view.fromNode + ">" + view.toNode, ahora,
+                                       view.segmentEndMs - view.segmentStartMs});
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
@@ -80,28 +89,55 @@ int main() {
     std::cout << "  " << muestrasEnMovimiento << " muestras con el courier en movimiento\n";
     assert(muestrasEnMovimiento > 20);         // no estuvo quieto
 
-    // Dentro de un mismo tramo, el avance tiene que ser creciente y en pasos chicos.
-    int crecientes = 0, saltosGrandes = 0;
-    for (std::size_t i = 1; i < ratios.size(); ++i) {
-        if (tramos[i] != tramos[i - 1]) {
+    // Dentro de un mismo tramo, el avance tiene que ser creciente y explicable por el
+    // tiempo transcurrido.
+    //
+    // La version anterior comparaba contra una constante: "ningun avance mayor a media
+    // cuadra entre dos muestras". Eso no mide el programa, mide la puntualidad del
+    // muestreador. Con la CPU saturada el bucle se despierta tarde, el tiempo simulado
+    // avanza igual -la posicion se deduce del reloj, no de quien la mire- y el avance
+    // legitimo entre dos muestras pasa de media cuadra. Reproducido: la prueba fallaba
+    // con seis quemadores de CPU y pasaba con la maquina libre.
+    //
+    // La propiedad de verdad es que la posicion sea una FUNCION CONTINUA DEL TIEMPO: el
+    // avance tiene que ser el que corresponde al rato que paso, ni mas ni menos. Asi, si
+    // la muestra llega tarde, el avance esperado crece con ella y la comparacion sigue
+    // valiendo.
+    int crecientes = 0, saltosInexplicables = 0, intermedios = 0;
+    for (std::size_t i = 1; i < muestras.size(); ++i) {
+        if (muestras[i].ratio > 0.05 && muestras[i].ratio < 0.95) {
+            ++intermedios;
+        }
+        if (muestras[i].tramo != muestras[i - 1].tramo) {
             continue;                           // cambio de tramo: no comparable
         }
-        if (ratios[i] >= ratios[i - 1]) {
+        if (muestras[i].ratio >= muestras[i - 1].ratio) {
             ++crecientes;
         }
-        if (ratios[i] - ratios[i - 1] > 0.5) {
-            ++saltosGrandes;                    // mas de media cuadra de un muestreo al otro
+        const std::int64_t dt = muestras[i].simMs - muestras[i - 1].simMs;
+        const std::int64_t duracion = muestras[i].duracionMs;
+        const double esperado =
+            duracion > 0 ? static_cast<double>(dt) / static_cast<double>(duracion) : 1.0;
+        // El margen cubre el redondeo y el desfase de medio muestreo entre leer el
+        // snapshot y leer el reloj.
+        if (muestras[i].ratio - muestras[i - 1].ratio > esperado + 0.05) {
+            ++saltosInexplicables;
         }
     }
     std::cout << "  avances dentro de un tramo: " << crecientes << " crecientes, "
-              << saltosGrandes << " saltos de mas de media cuadra\n";
+              << saltosInexplicables << " mayores que lo que explica el tiempo\n";
+    std::cout << "  " << intermedios
+              << " muestras con el punto ENTRE dos esquinas, no sobre una\n";
     assert(crecientes > 10);
-    assert(saltosGrandes == 0);                 // el punto no salta
+    assert(saltosInexplicables == 0);           // el punto no salta
+    // Esta es la que descarta el comportamiento que el §2 llama defecto: un punto que
+    // salta de esquina en esquina estaria siempre en un ratio de 0 o de 1.
+    assert(intermedios > 10);
 
     // Y recorrio varios tramos distintos: no se quedo en uno solo.
     std::size_t distintos = 1;
-    for (std::size_t i = 1; i < tramos.size(); ++i) {
-        if (tramos[i] != tramos[i - 1]) {
+    for (std::size_t i = 1; i < muestras.size(); ++i) {
+        if (muestras[i].tramo != muestras[i - 1].tramo) {
             ++distintos;
         }
     }

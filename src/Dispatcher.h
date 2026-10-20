@@ -59,11 +59,22 @@ private:
     void sweepLateQuotes();
     bool stopped() const;
 
+    // Devuelve true si NO hay camino del restaurante al destino de la orden.
+    //
+    // Es una consulta sobre el grafo, que es inmutable, asi que la respuesta no depende
+    // de donde esten los couriers ni de cuando se pregunte: o existe el camino o no.
+    bool destinoInalcanzable(const Order& order);
+
     const SimContext ctx_;
     const std::vector<std::unique_ptr<CourierActor>>& fleet_;
     const std::int64_t quoteTimeoutMs_;    // REAL
     const std::int64_t acceptTimeoutMs_;   // SIMULADO
     QuoteFn quote_;
+
+    // El Router del hilo del dispatcher, para la consulta de alcanzabilidad. Es SUYO:
+    // los trabajadores del pool tienen cada uno el propio. shortestPath() no es const
+    // justamente para que el compilador impida compartirlo.
+    Router router_;
 
     // Las estimaciones corren en un grupo acotado de trabajadores, tantos como
     // nucleos tenga la maquina, en vez de un hilo nuevo por candidato. Con 64
