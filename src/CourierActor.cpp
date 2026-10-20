@@ -66,9 +66,31 @@ void CourierActor::deliver(Router& router, OrderId orderId) {
     // cambio de estado de la orden: es un instante del recorrido del courier.
     setCourierState(CourierState::atRestaurant);
 
-    // Hace fila por un lugar en el restaurante. Es el unico punto donde el courier se
-    // bloquea esperando a OTRO courier, y por eso el estado atRestaurant existe separado
-    // de toPickup: en la ventana, un courier naranja es uno esperando su turno.
+    Event started;
+    started.name = EventName::kPickupStarted;
+    started.order = orderId;
+    started.courier = id_;
+    started.restaurant = order.restaurantId;
+    const std::int64_t arrivedMs = ctx_.log.write(started);
+
+    // PRIMERO se espera a que la comida este lista, y recien DESPUES se hace fila por un
+    // lugar de retiro.
+    //
+    // Al reves -que era como estaba- el courier ocupaba un lugar del restaurante para
+    // quedarse parado esperando una preparacion que puede durar minutos, mientras otro
+    // con la comida ya lista hacia fila afuera. Un recurso escaso retenido sin usarlo es
+    // el error clasico al administrar recursos compartidos: no alcanza con tomarlos y
+    // soltarlos bien, hay que tomarlos lo mas tarde posible.
+    //
+    // La preparacion se cuenta desde que la orden se creo.
+    const std::int64_t readyMs = order.createdMs + order.prepMs;
+    if (readyMs > arrivedMs && !waitSim(readyMs - arrivedMs)) {
+        return;   // le pidieron parar esperando la comida; todavia no tomo ningun lugar
+    }
+
+    // Hace fila por un lugar. Es el unico punto donde el courier se bloquea esperando a
+    // OTRO courier, y por eso el estado atRestaurant existe separado de toPickup: en la
+    // ventana, un courier naranja es uno esperando su turno.
     //
     // Su propio candado NO esta tomado mientras espera: acquire() bloquea sobre el
     // candado del restaurante, asi que el renderer puede seguir pidiendole snapshot().
@@ -77,25 +99,6 @@ void CourierActor::deliver(Router& router, OrderId orderId) {
         entry == ctx_.restaurants.end() ? nullptr : entry->second.get();
     if (restaurant != nullptr && !restaurant->acquire()) {
         return;   // le pidieron parar mientras hacia fila
-    }
-
-    Event started;
-    started.name = EventName::kPickupStarted;
-    started.order = orderId;
-    started.courier = id_;
-    started.restaurant = order.restaurantId;
-    const std::int64_t arrivedMs = ctx_.log.write(started);
-
-    // Si llego antes de que la comida estuviera lista, espera lo que falte. La
-    // preparacion se cuenta desde que la orden se creo.
-    const std::int64_t readyMs = order.createdMs + order.prepMs;
-    if (readyMs > arrivedMs && !waitSim(readyMs - arrivedMs)) {
-        if (restaurant != nullptr) {
-            // Le pidieron parar esperando la comida: el lugar se libera igual, o
-            // el siguiente de la fila esperaria un turno que nadie va a ceder.
-            restaurant->release();
-        }
-        return;
     }
 
     ctx_.book.pickedUp(orderId, id_);

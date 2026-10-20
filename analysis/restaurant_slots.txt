@@ -38,3 +38,38 @@ esperan un numero que ya nadie va a atender, y el join() del cierre no vuelve nu
 resumen: {"created": 447, "delivered": 98, "rejected": 304, "pending": 45, "reassigned": 1, "breakdowns": 1, "avgDeliveryMs": 1218629, "maxDeliveryMs": 2009794, "deliveredPerCourier": {"c1": 15, "c2": 0, "c3": 12, "c4": 17, "c5": 12, "c6": 14, "c7": 14, "c8": 14}}
 
 TODO CORRECTO: el log es valido y el resumen coincide con el
+
+## Mejora: tomar el lugar recien cuando la comida esta lista
+
+En la primera version el courier pedia el lugar al llegar y despues esperaba ahi la
+preparacion. Ocupaba un recurso escaso sin usarlo, mientras otro courier con la
+comida ya lista hacia fila afuera.
+
+Ahora espera la comida primero y pide el lugar despues. El principio: no alcanza con
+tomar y soltar un recurso compartido correctamente, hay que tomarlo lo mas tarde
+posible y soltarlo lo antes posible.
+
+### Medicion, misma semilla y misma duracion (90 min simulados)
+
+Configuracion por defecto (prep de 1 a 5 min, 1 o 2 slots):
+
+                          antes    despues
+  entregadas .............. 112        112
+  rechazadas .............. 290        287
+  tiempo medio ........... 1198s      1185s
+
+Sin diferencia apreciable, y el motivo importa: prepTimeMs se cuenta desde que la
+orden se CREA, y el viaje al restaurante dura cientos de segundos. Para cuando el
+courier llega, la comida ya esta lista hace rato, asi que no hay espera que mover.
+
+Configuracion con el recurso en disputa (prep de 15 a 20 min, 1 solo slot):
+
+                          antes    despues
+  entregadas ............... 81         88     (+8.6 %)
+  rechazadas .............. 319        313
+  tiempo medio ........... 1515s      1482s    (-33 s)
+
+La mejora es real pero condicional: solo se nota cuando la preparacion es larga y los
+slots escasos. Se deja igual porque el razonamiento no depende de la configuracion
+-retener un recurso escaso sin usarlo nunca es correcto- y porque el enunciado
+permite cualquier prepTimeMs.
