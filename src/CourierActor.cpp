@@ -3,8 +3,15 @@
 #include <algorithm>
 
 CourierActor::CourierActor(CourierId id, const std::string& startNode, int bagCapacity,
-                           const SimContext& ctx)
-    : id_(id), ctx_(ctx), state_(id, startNode, bagCapacity) {}
+                           const SimContext& ctx, double breakdownProbability,
+                           std::uint32_t seed)
+    : id_(id),
+      ctx_(ctx),
+      breakdownProbability_(breakdownProbability),
+      // Semilla derivada del id con una constante de mezcla: cada courier tiene su
+      // propia corriente de azar y la corrida sigue siendo reproducible.
+      rng_(seed ^ (static_cast<std::uint32_t>(id) * 2654435761u)),
+      state_(id, startNode, bagCapacity) {}
 
 void CourierActor::run() {
     // La memoria de trabajo de Dijkstra es de ESTE hilo. Se crea una vez, aca, y se
@@ -26,7 +33,12 @@ void CourierActor::run() {
         // El reparto entero ocurre SIN el candado tomado. Dura segundos; sostenerlo
         // congelaria la ventana y bloquearia al dispatcher.
         lock.unlock();
-        deliver(router, orderId);
+        // La averia se sortea ANTES de salir a repartir. Si ocurre, el courier queda
+        // sin ordenes, y la vuelta siguiente lo encuentra esperando para siempre:
+        // esta fuera de servicio.
+        if (!maybeBreakDown(0.5)) {
+            deliver(router, orderId);
+        }
         lock.lock();
     }
 }
@@ -53,6 +65,7 @@ void CourierActor::deliver(Router& router, OrderId orderId) {
     // Llego al restaurante. pickupStarted se registra directo en el log porque no es un
     // cambio de estado de la orden: es un instante del recorrido del courier.
     setCourierState(CourierState::atRestaurant);
+
     Event started;
     started.name = EventName::kPickupStarted;
     started.order = orderId;
@@ -60,14 +73,48 @@ void CourierActor::deliver(Router& router, OrderId orderId) {
     started.restaurant = order.restaurantId;
     const std::int64_t arrivedMs = ctx_.log.write(started);
 
-    // Si llego antes de que la comida estuviera lista, espera lo que falte. La
-    // preparacion se cuenta desde que la orden se creo.
+    // PRIMERO se espera a que la comida este lista, y recien DESPUES se hace fila por un
+    // lugar de retiro.
+    //
+    // Al reves -que era como estaba- el courier ocupaba un lugar del restaurante para
+    // quedarse parado esperando una preparacion que puede durar minutos, mientras otro
+    // con la comida ya lista hacia fila afuera. Un recurso escaso retenido sin usarlo es
+    // el error clasico al administrar recursos compartidos: no alcanza con tomarlos y
+    // soltarlos bien, hay que tomarlos lo mas tarde posible.
+    //
+    // La preparacion se cuenta desde que la orden se creo.
     const std::int64_t readyMs = order.createdMs + order.prepMs;
     if (readyMs > arrivedMs && !waitSim(readyMs - arrivedMs)) {
-        return;
+        return;   // le pidieron parar esperando la comida; todavia no tomo ningun lugar
+    }
+
+    // Hace fila por un lugar. Es el unico punto donde el courier se bloquea esperando a
+    // OTRO courier, y por eso el estado atRestaurant existe separado de toPickup: en la
+    // ventana, un courier naranja es uno esperando su turno.
+    //
+    // Su propio candado NO esta tomado mientras espera: acquire() bloquea sobre el
+    // candado del restaurante, asi que el renderer puede seguir pidiendole snapshot().
+    const auto entry = ctx_.restaurants.find(order.restaurantId);
+    Restaurant* const restaurant =
+        entry == ctx_.restaurants.end() ? nullptr : entry->second.get();
+    if (restaurant != nullptr && !restaurant->acquire()) {
+        return;   // le pidieron parar mientras hacia fila
     }
 
     ctx_.book.pickedUp(orderId, id_);
+    if (restaurant != nullptr) {
+        restaurant->release();   // retiro: libera el lugar para el siguiente
+    }
+
+    // La otra mitad del sorteo, ya con la comida encima. Es el caso interesante:
+    // el traspaso tiene que mover una orden RETIRADA, y el receptor termina una
+    // entrega que empezo otro. Sorteando solo antes de salir, eso no pasaba nunca.
+    //
+    // Se reparte la probabilidad entre los dos puntos para no cambiar la tasa de
+    // averias por viaje: lo que cambia es CUANDO ocurren, no cuantas.
+    if (maybeBreakDown(0.5)) {
+        return;   // el traspaso ya vacio la bolsa; la orden la termina otro
+    }
 
     setCourierState(CourierState::toDropoff);
     const Trip toDropoff = travelTo(router, order.dropoffNode);
@@ -169,6 +216,92 @@ void CourierActor::finish(OrderId orderId, bool wasDelivered) {
     if (state_.bag.empty()) {
         state_.state = CourierState::idle;
     }
+}
+
+bool CourierActor::maybeBreakDown(double fraction) {
+    const double probability = breakdownProbability_ * fraction;
+    if (probability <= 0.0) {
+        return false;
+    }
+    // rng_ es de este hilo: ningun otro lo toca, asi que no necesita candado.
+    std::uniform_real_distribution<double> chance(0.0, 1.0);
+    if (chance(rng_) >= probability) {
+        return false;
+    }
+    return breakDownAndHandOver();
+}
+
+bool CourierActor::forceBreakdown() { return breakDownAndHandOver(); }
+
+bool CourierActor::breakDownAndHandOver() {
+    if (fleet_ == nullptr) {
+        return false;   // sin companeros no hay a quien traspasarle nada
+    }
+
+    // Todas las ordenes van a UN solo companero, o la averia no ocurre. Eso es lo que
+    // significa todo-o-nada, y es el modelo que define el §6: orderReassigned lleva from
+    // y to obligatorios, los dos ids de courier, asi que las ordenes de un averiado van
+    // a otro courier y no de vuelta a la cola.
+    //
+    // Devolverlas a la cola parecia mejor -mas averias se concretan- pero implica mover
+    // la orden de assigned a created sin ningun evento que lo represente, y el §6 abre
+    // exigiendo que todo cambio de estado quede registrado. Un cambio silencioso rompe
+    // la validacion del log.
+    std::vector<OrderId> moved;
+    CourierId receiver = kNoCourier;
+    for (const auto& candidate : *fleet_) {
+        if (candidate->id() == id_) {
+            continue;
+        }
+        moved = tryHandOverTo(*candidate);
+        if (!moved.empty()) {
+            receiver = candidate->id();
+            break;
+        }
+    }
+    if (receiver == kNoCourier) {
+        return false;
+    }
+
+    // El registro ocurre YA SOLTADOS los dos candados de courier. La jerarquia permite
+    // courier -> libro -> log, pero no hay motivo para sostenerlos mientras el libro
+    // escribe.
+    ctx_.book.recordBreakdown(id_);
+    for (const OrderId orderId : moved) {
+        ctx_.book.handOver(orderId, id_, receiver);
+    }
+    return true;
+}
+
+std::vector<OrderId> CourierActor::tryHandOverTo(CourierActor& target) {
+    // DOS candados a la vez. Tomarlos uno por uno, cada hilo en el orden que le toque,
+    // es el interbloqueo de manual: si A se averia y elige a B mientras B se averia y
+    // elige a A, cada uno tendria el suyo esperando el del otro para siempre.
+    //
+    // scoped_lock los toma con un algoritmo que evita ese ciclo, sin importar el orden
+    // en que se le pasen. Por eso las averias simultaneas no pueden bloquear el sistema,
+    // que es lo que exige el §4.
+    const std::scoped_lock guard(mutex_, target.mutex_);
+
+    if (state_.bag.empty() || state_.state == CourierState::brokenDown) {
+        return {};
+    }
+    if (target.stopRequested_ || target.state_.state == CourierState::brokenDown) {
+        return {};
+    }
+    const std::size_t libre =
+        static_cast<std::size_t>(target.state_.bagCapacity) - target.state_.bag.size();
+    if (state_.bag.size() > libre) {
+        return {};   // todo-o-nada: si no entran todas, no se mueve ninguna
+    }
+
+    std::vector<OrderId> moved = state_.bag;
+    for (const OrderId orderId : moved) {
+        target.state_.bag.push_back(orderId);
+    }
+    state_.bag.clear();
+    state_.state = CourierState::brokenDown;
+    return moved;
 }
 
 void CourierActor::requestStop() {

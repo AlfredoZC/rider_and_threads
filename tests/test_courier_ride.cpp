@@ -84,7 +84,12 @@ int main() {
         const std::string logPath = "tests/bin/ride_full.log";
         EventLog log(logPath, clock);
         OrderBook book(50, clock, log);
-        const SimContext ctx{graph, clock, log, book};
+        Restaurants restaurants;
+        for (const RestaurantConfig& r : cfg.restaurants) {
+            restaurants.emplace(r.id,
+                                std::make_unique<Restaurant>(r.id, r.pickupSlots));
+        }
+        const SimContext ctx{graph, clock, log, book, restaurants};
 
         CourierActor courier(1, cfg.startNode, cfg.bagCapacity, ctx);
 
@@ -174,7 +179,12 @@ int main() {
         const SimClock clock(2000.0);
         EventLog log("tests/bin/ride_prep.log", clock);
         OrderBook book(50, clock, log);
-        const SimContext ctx{graph, clock, log, book};
+        Restaurants restaurants;
+        for (const RestaurantConfig& r : cfg.restaurants) {
+            restaurants.emplace(r.id,
+                                std::make_unique<Restaurant>(r.id, r.pickupSlots));
+        }
+        const SimContext ctx{graph, clock, log, book, restaurants};
         CourierActor courier(1, restaurantNode, cfg.bagCapacity, ctx);   // ya esta ahi
 
         const OrderId id = 1;
@@ -205,7 +215,12 @@ int main() {
         const SimClock clock(1.0);   // tiempo real: el viaje dura minutos
         EventLog log("tests/bin/ride_stop.log", clock);
         OrderBook book(50, clock, log);
-        const SimContext ctx{graph, clock, log, book};
+        Restaurants restaurants;
+        for (const RestaurantConfig& r : cfg.restaurants) {
+            restaurants.emplace(r.id,
+                                std::make_unique<Restaurant>(r.id, r.pickupSlots));
+        }
+        const SimContext ctx{graph, clock, log, book, restaurants};
         CourierActor courier(1, cfg.startNode, cfg.bagCapacity, ctx);
 
         const OrderId id = 1;

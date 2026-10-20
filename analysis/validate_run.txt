@@ -1,0 +1,46 @@
+# Validacion de una corrida completa (§6, §11)
+
+Fecha: 2026-10-19T11:56:28-04:00
+
+Herramienta: tools/validate_log.py, una reimplementacion independiente de las
+reglas del enunciado. No comparte codigo con el simulador: relee el log y recuenta.
+
+  ./delivery_sim config/equipetrol.json --log events.log > salida.txt
+  (20 segundos reales, cerrado con SIGINT)
+  python3 tools/validate_log.py events.log salida.txt
+
+lineas de log analizadas: 214
+  orderAssigned        42
+  orderCreated         86
+  orderDelivered       18
+  orderPickedUp        22
+  orderRejected        23
+  pickupStarted        22
+  simulationStopping   1
+resumen: {"created": 86, "delivered": 18, "rejected": 23, "pending": 45, "reassigned": 0, "breakdowns": 0, "avgDeliveryMs": 592417, "maxDeliveryMs": 996264, "deliveredPerCourier": {"c1": 4, "c2": 2, "c3": 2, "c4": 2, "c5": 2, "c6": 2, "c7": 2, "c8": 2}}
+
+TODO CORRECTO: el log es valido y el resumen coincide con el
+
+## Que comprueba
+
+1. Cada linea es JSON valido y lleva exactamente los campos que la tabla del §6
+   asigna a su evento, con order y courier como cadenas.
+2. Cada orden recorre una secuencia de estados legal y termina en un unico estado
+   final. La maquina de estados esta reimplementada en Python, asi que un agujero
+   en la de C++ no se compartiria.
+3. La t de una orden nunca decrece.
+4. Cada contador del resumen es igual a la cantidad de lineas que coinciden, la
+   identidad created = delivered + rejected + pending cierra, y los valores de
+   deliveredPerCourier suman delivered.
+
+## Dos defectos que encontro en su primera corrida
+
+- El resumen informaba siempre pending=0. markRemainingAsPending deja las ordenes
+  en un estado FINAL, asi que el contador de vivas bajaba a cero justo antes de que
+  stats() lo leyera.
+- Las ordenes rechazadas por cola llena no emitian orderCreated: el resumen decia 86
+  creadas y el log tenia 68.
+
+El primero estaba tambien en el test unitario, que afirmaba pending==0: la prueba se
+habia escrito con la misma idea equivocada que el codigo y se confirmaban entre si.
+Lo que los desmintio fue una herramienta independiente.

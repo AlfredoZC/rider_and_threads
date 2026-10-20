@@ -42,7 +42,12 @@ int main() {
     const SimClock clock(60.0);
     EventLog log("tests/bin/courier_actor.log", clock);
     OrderBook book(cfg.maxPending, clock, log);
-    const SimContext ctx{graph, clock, log, book};
+    Restaurants restaurants;
+    for (const RestaurantConfig& r : cfg.restaurants) {
+        restaurants.emplace(r.id,
+                            std::make_unique<Restaurant>(r.id, r.pickupSlots));
+    }
+    const SimContext ctx{graph, clock, log, book, restaurants};
 
     // --- estado inicial coherente, visto desde afuera
     {

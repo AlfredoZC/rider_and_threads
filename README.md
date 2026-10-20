@@ -191,6 +191,22 @@ PENDIENTE. Decisiones que el enunciado deja abiertas y que se documentan aquí:
 - Tiempos simulados fijos (entrega en el restaurante, entrega al cliente, reparación).
 - Qué es reproducible con una misma `seed` y qué depende del planificador del sistema operativo.
 
+## 6b. La ventana
+
+![La simulación en marcha](docs/ventana.png)
+
+Cada punto es un courier, dibujado en su posición real sobre la calle que recorre, y
+esa posición avanza de forma continua cuadro a cuadro. Los colores distinguen los
+estados: gris libre, amarillo yendo al restaurante, **naranja esperando turno en la
+puerta**, verde entregando, rojo averiado. Las líneas violetas unen a cada courier con
+la puerta del cliente al que está yendo.
+
+El naranja no es decorativo: ver varios juntos en un restaurante es la exclusión mutua
+de los `pickupSlots` ocurriendo a la vista.
+
+La capa del grafo de calles está oculta por defecto, porque con 1027 calles y sus
+flechas tapa el mapa. La tecla `G` la muestra cuando hace falta inspeccionar la red.
+
 ## 7. Esquema del programa: hilos y canales
 
 Estado: lo marcado **[hecho]** está implementado y probado; **[plan]** es diseño todavía no
@@ -263,7 +279,7 @@ comprobación ocurre dentro del candado del `OrderBook`, que dura microsegundos.
 | 3 | `Dispatcher` → tareas de cotización | `std::future` con plazo de `quoteTimeoutMs` reales | [plan] |
 | 4 | `Dispatcher` → `CourierActor` | `offer()` sobre el monitor del courier + `notify_one` | [plan] |
 | 5 | `CourierActor` ↔ `Restaurant` | monitor con cola FIFO y `pickupSlots` | [plan] |
-| 6 | Courier averiado → courier receptor | `std::scoped_lock` sobre los dos couriers | [plan] |
+| 6 | Courier averiado → courier receptor | `std::scoped_lock` sobre los dos couriers | [hecho] |
 | 7 | Todos → `EventLog` | monitor; una línea JSON completa por evento | [hecho] |
 | 8 | Renderer / dispatcher ← `CourierActor` | `snapshot()` devuelve una copia tomada bajo candado | [hecho] |
 | 9 | main → todos | `requestStop()` en cada monitor y `join()` de todos los hilos | [hecho] |
@@ -275,7 +291,7 @@ fijar un orden total y no violarlo nunca.
 
 | Nivel | Mutex | Puede tomar a continuación | Estado |
 |-------|-------|----------------------------|--------|
-| 1 | `CourierActor` (uno, o dos a la vez con `std::scoped_lock`) | `OrderBook`, `EventLog` | [hecho] |
+| 1 | `CourierActor` (uno, o **dos a la vez** con `std::scoped_lock`) | `OrderBook`, `EventLog` | [hecho] |
 | 2 | `OrderBook`, `Restaurant` | `EventLog` | [hecho] el libro |
 | 3 | `EventLog` | ninguno (hoja) | [hecho] |
 
@@ -284,6 +300,13 @@ Dos propiedades lo sostienen hoy:
 - **`EventLog::write()` no llama a nada que pueda tomar otro candado.** Es hoja por
   construcción, así que registrar un evento teniendo tomado el candado del `OrderBook` o el de
   un courier no puede bloquear a nadie.
+- **El traspaso por avería toma dos candados de courier a la vez, y por eso usa
+  `std::scoped_lock`.** Tomarlos uno por uno sería el interbloqueo de manual: si A se
+  avería y elige a B mientras B se avería y elige a A, cada uno tendría el suyo
+  esperando el del otro para siempre. `scoped_lock` los toma con un algoritmo que
+  evita ese ciclo sin importar el orden en que se le pasen, y es lo que hace que las
+  averías simultáneas no puedan bloquear el sistema (§4). *Verificado: 300 averías
+  simultáneas cruzadas entre dos couriers, sin un solo bloqueo.*
 - **`OrderGenerator` suelta su propio candado antes de llamar a `admit()`.** Nunca sostiene dos
   a la vez, de modo que no puede participar de un ciclo.
 
@@ -355,31 +378,169 @@ PENDIENTE: completar la columna *Dónde* con `archivo:línea` reales y la justif
 
 ## 11. Experimentos
 
-PENDIENTE (Fase 10). Para cada experimento: qué se cambió, qué se mantuvo igual, qué se midió y qué se concluye.
-Los datos crudos de cada corrida están en `experiments/`.
+Cada experimento varía **una sola** magnitud, mantiene el resto igual —incluida la semilla,
+que hace la corrida reproducible— y mide sobre el resumen final, que está verificado contra
+el log por `tools/validate_log.py`. Los datos crudos están en `analysis/`.
 
-| Experimento | Variante | Corridas | created | delivered | rejected | avgDeliveryMs | Otra métrica |
-|-------------|----------|----------|---------|-----------|----------|---------------|--------------|
-| | | | | | | | |
+### Experimento 1: cuándo tomar el lugar de retiro
 
-**Cambio de diseño motivado por un experimento:** PENDIENTE (antes/después con números).
+**Qué se cambió.** El courier pedía un lugar en el restaurante al llegar y después esperaba
+ahí a que la comida estuviera lista. Ahora espera la comida primero y pide el lugar después.
+
+**Qué se mantuvo igual.** Semilla 42, 90 minutos simulados, `timeScale: 300`, sin averías.
+
+| configuración por defecto (prep 1–5 min, 1–2 slots) | antes | después |
+|---|---|---|
+| entregadas | 112 | 112 |
+| rechazadas | 290 | 287 |
+| tiempo medio de entrega | 1198 s | 1185 s |
+
+| recurso en disputa (prep 15–20 min, 1 slot) | antes | después |
+|---|---|---|
+| entregadas | 81 | **88** (+8,6 %) |
+| rechazadas | 319 | 313 |
+| tiempo medio de entrega | 1515 s | **1482 s** (−33 s) |
+
+**Conclusión.** El cambio de diseño vale, pero su efecto es condicional. Con la configuración
+por defecto no se nota, y el motivo es más interesante que el número: `prepTimeMs` se cuenta
+desde que la orden **se crea**, y el viaje al restaurante dura cientos de segundos, así que
+cuando el courier llega la comida ya está lista. El cuello de botella del sistema no es la
+cocina sino el viaje. Cuando la preparación domina, retener un lugar sin usarlo sí cuesta
+entregas.
+
+Se adoptó el cambio porque el razonamiento no depende de la configuración: un recurso escaso
+retenido sin usar bloquea a otros exactamente igual que uno en uso, y el enunciado permite
+cualquier `prepTimeMs`.
+
+### Experimento 2: dónde ocurre la avería
+
+**Qué se cambió.** La avería se sorteaba una sola vez, antes de salir a repartir. Ahora
+también se sortea después de retirar la comida, con la mitad de la probabilidad en cada punto
+para no alterar la tasa por viaje.
+
+**Qué se midió.** Cuántos traspasos mueven una orden ya retirada: antes, **cero por
+construcción**; después, posibles. El caso es poco frecuente en corridas aleatorias porque los
+couriers suelen averiarse antes de llegar al restaurante, de modo que la evidencia es el test
+determinista `tests/test_breakdown.cpp`.
+
+**Conclusión.** El traspaso que de verdad importa —mover comida que ya está en una bolsa y no
+puede volver al restaurante— era inalcanzable, y con él el `std::scoped_lock` que lo protege
+no se ejercitaba nunca en una corrida real.
+
+### Experimento 3: devolver a la cola en lugar de traspasar (descartado)
+
+**Qué se cambió.** Que las órdenes que el courier todavía no había retirado volvieran a la cola
+en vez de traspasarse, dejando el todo-o-nada sólo para las que llevan comida.
+
+**Qué se midió.** Averías concretadas en la misma corrida: de **2 a 8**. Exigir que un solo
+compañero se haga cargo de *todas* las órdenes las cancelaba casi siempre.
+
+**Conclusión: se revirtió.** El validador del log lo rechazó por dos motivos. `orderReassigned`
+quedaba sin `to`, que el §6 define obligatorio como id del courier receptor; y la orden pasaba
+de `assigned` a `created` sin ningún evento que lo registrara, mientras el §6 exige que todo
+cambio de estado quede en el log.
+
+Que `orderReassigned` lleve `from` y `to`, los dos ids de courier, implica que las órdenes de
+un averiado van **a otro courier**: no hay evento para "vuelve a la cola" porque esa no es la
+mecánica prevista. Un experimento que mejora una métrica y rompe una regla no es una mejora.
+
+### Experimento 4: cantidad de lugares de retiro
+
+**Qué se cambió.** `pickupSlots` de cada restaurante.
+
+**Qué se midió.** Con un solo lugar por restaurante, la tasa de rechazo sube marcadamente: los
+couriers pasan más tiempo en la fila, entregan más lento, la cola llega a `maxPending` y las
+órdenes nuevas se rechazan con `queueFull`. Una corrida de 22 s con la configuración por
+defecto dio `created 447 = delivered 98 + rejected 304 + pending 45`.
+
+**Conclusión.** El sistema traslada la escasez de un recurso a la métrica de rechazo, que es el
+comportamiento correcto: no pierde órdenes ni las acumula indefinidamente, las rechaza al
+entrar.
 
 ## 12. Análisis con herramientas
 
-PENDIENTE (Fase 9). Cada herramienta observó una corrida completa de `config/equipetrol.json` con ráfagas,
-averías y apagado por señal. La salida completa y sin editar está en `analysis/`.
+Las salidas completas y sin editar están en `analysis/`.
 
-| Herramienta | Versión | Comando exacto | Qué reportó | Qué se cambió | Resultado al re-correr |
-|-------------|---------|----------------|-------------|---------------|------------------------|
-| ThreadSanitizer | | | | | |
-| AddressSanitizer / LeakSanitizer | | | | | |
-| Valgrind Memcheck | | | | | |
+| Herramienta | Versión | Qué observó | Qué reportó |
+|---|---|---|---|
+| ThreadSanitizer | GCC 13.3 | `EventLog` con 8 hilos × 500 eventos | 0 reportes |
+| ThreadSanitizer | GCC 13.3 | `CourierActor`: 8 hilos ociosos + 300 ciclos de arranque y parada | 0 reportes |
+| AddressSanitizer + LeakSanitizer | GCC 13.3 | corrida completa de 25 s con ráfagas, averías y cierre por señal | 0 errores; 320 bytes en 3 fugas, **ninguna del código propio** |
+| `tools/validate_log.py` | propia | el log y el resumen de cada corrida | ver abajo |
 
-Reportes que persisten en la versión final y su explicación: PENDIENTE.
+### ThreadSanitizer
+
+```
+g++ -std=c++17 -Wall -Wextra -g -O1 -fno-omit-frame-pointer -fsanitize=thread -pthread
+setarch $(uname -m) -R ./tests/bin/tsan_event_log
+```
+
+El `setarch -R` desactiva la aleatorización de direcciones. Sin eso el binario instrumentado
+**segfaulta** en esta máquina, por un conflicto conocido entre el mapa de memoria de
+ThreadSanitizer y el rango de aleatorización de los núcleos recientes.
+
+**Control negativo.** Una ejecución limpia por sí sola no demuestra que el experimento tenga
+capacidad de detección: podría ocurrir que la prueba no ejercite el código o que los hilos
+nunca coincidan. Por eso se repitió el análisis sobre una copia con el `lock_guard` del
+registro deliberadamente desactivado. En esa variante la herramienta informó una condición de
+carrera y el programa abortó, lo que confirma que la ejecución limpia es significativa.
+
+### AddressSanitizer
+
+```
+cmake -DENABLE_ASAN=ON .. && make
+ASAN_OPTIONS=detect_leaks=1 ./delivery_sim config/equipetrol.json --log events.log
+```
+
+Cero errores de memoria. Las 320 fugas provienen de `libfontconfig`, llamada desde `FcInit` a
+través de `libQt5Gui`, que es lo que OpenCV usa para la ventana: se asignan una vez al
+inicializar el sistema de fuentes y el sistema operativo las recupera al terminar. Ninguna
+traza menciona un archivo de `src/`, comprobado filtrando la salida completa por los nombres
+del proyecto.
+
+### Validador del log
+
+`tools/validate_log.py` relee el log y el resumen y comprueba cuatro cosas que el programa no
+puede verificarse a sí mismo: que cada línea lleve exactamente los campos que la tabla del §6
+asigna a su evento; que cada orden recorra una secuencia de estados legal y termine en un único
+estado final; que la `t` nunca decrezca; y que cada contador del resumen sea igual a la cantidad
+de líneas que coinciden.
+
+**La máquina de estados está reimplementada en Python**, así que no comparte código con la de
+C++ y un agujero en una no se refleja en la otra.
+
+Encontró tres defectos reales que ni las pruebas unitarias ni la inspección habían detectado:
+
+1. El resumen informaba siempre `pending: 0`. `markRemainingAsPending()` deja las órdenes en un
+   estado final, así que el contador de vivas bajaba a cero justo antes de que `stats()` lo
+   leyera. **El mismo error estaba en el test unitario**, escrito con la idea equivocada: la
+   prueba y el código se confirmaban entre sí.
+2. Las órdenes rechazadas por cola llena no emitían `orderCreated`: el resumen decía 86 creadas
+   y el log tenía 68.
+3. El experimento 3, descrito arriba.
 
 ## 13. Limitaciones conocidas
 
-PENDIENTE.
+**La preparación se cuenta desde que la orden se crea**, no desde que el courier llega al
+restaurante. Es una simplificación y cambia cuál recurso resulta escaso: con los viajes de este
+mapa, la comida siempre está lista antes de que alguien llegue a buscarla, así que los lugares
+de retiro casi nunca son el cuello de botella. Ver el experimento 1.
+
+**Un courier averiado no vuelve al servicio.** El enunciado no menciona reparaciones, así que
+la avería se modela como una baja definitiva. En corridas largas con probabilidad alta, la flota
+se agota y la tasa de entrega cae a cero.
+
+**La estimación de tiempo ignora las órdenes que el courier ya lleva.** Un courier con la bolsa
+llena da el mismo número que uno vacío, así que el dispatcher puede elegirlo creyendo que está
+libre.
+
+**El segundo tramo de la estimación se recalcula por candidato.** El trayecto del restaurante al
+cliente es el mismo para todos los couriers y se computa una vez por cada uno. Con 8 candidatos
+son 16 ejecuciones de Dijkstra por orden en lugar de 9.
+
+**La representación del grafo usa un vector de vectores.** Son 668 asignaciones de memoria
+dispersas; una representación contigua sería más amigable con la caché en el camino de las
+estimaciones.
 
 ---
 

@@ -243,7 +243,11 @@ int main() {
         assert(s.created == 5);
         assert(s.delivered == 1);
         assert(s.rejected == 1);
-        assert(s.pending == 0);              // ya ninguna esta viva
+        // pending cuenta las que TERMINARON en ese estado, no las vivas: al marcarlas,
+        // pending es un estado final y el contador de vivas baja a cero. Si stats()
+        // informara solo las vivas, el resumen diria siempre cero pendientes.
+        assert(s.pending == 3);
+        assert(s.created == s.delivered + s.rejected + s.pending);
         assert(book.find(1)->state == OrderState::delivered);
         assert(book.find(2)->state == OrderState::rejected);
         assert(book.find(3)->state == OrderState::pending);

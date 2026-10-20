@@ -31,6 +31,7 @@ struct OrderStats {
     std::int64_t delivered = 0;
     std::int64_t rejected = 0;
     std::int64_t reassigned = 0;
+    std::int64_t breakdowns = 0;
     std::int64_t pending = 0;          // vivas en este instante
     std::int64_t avgDeliveryMs = 0;
     std::int64_t maxDeliveryMs = 0;
@@ -84,6 +85,16 @@ public:
     // podria mover una orden justo despues de contarla. Devuelve cuantas marco.
     std::int64_t markRemainingAsPending();
 
+    // Traspasa una orden de un courier a otro: cambia a quien la tiene asignada y
+    // registra orderReassigned con from y to, que el §6 define como los ids de los dos
+    // couriers. El estado de la orden NO cambia: una que ya estaba retirada sigue
+    // retirada, solo que ahora la lleva otro.
+    bool handOver(OrderId id, CourierId from, CourierId to);
+
+    // Deja constancia de una averia. Vive aca y no en el courier porque el libro es
+    // quien lleva los contadores del resumen y quien escribe en el log.
+    void recordBreakdown(CourierId courier);
+
     // Una copia del estado actual, o nullopt si el id no existe. Copia: quien la recibe
     // trabaja fuera del candado.
     std::optional<Order> find(OrderId id) const;
@@ -108,7 +119,12 @@ private:
     std::condition_variable work_;   // avisa que entro una orden sin asignar
     bool stopWaiting_ = false;       // protegido por mutex_
     std::unordered_map<OrderId, Order> orders_;   // protegido por mutex_
-    std::size_t pending_ = 0;                     // protegido por mutex_
+    std::size_t pending_ = 0;        // vivas en este instante
+    // Las que markRemainingAsPending() dejo en estado pending. Se cuentan aparte
+    // porque pending es un estado FINAL: al marcarlas, pending_ baja a cero, y sin
+    // este contador el resumen reportaria siempre cero pendientes y el invariante
+    // created = delivered + rejected + pending no cerraria.
+    std::int64_t markedPending_ = 0;                     // protegido por mutex_
     OrderStats stats_;                            // protegido por mutex_
     std::int64_t deliverySumMs_ = 0;              // protegido por mutex_
 };

@@ -20,6 +20,7 @@
 #include "Config.h"
 #include "CourierActor.h"
 #include "Quote.h"
+#include "QuotePool.h"
 #include "SimContext.h"
 
 class Dispatcher {
@@ -45,6 +46,7 @@ public:
     // Cuantas estimaciones se pidieron y cuantas llegaron tarde. Para las pruebas y para
     // la tabla de experimentos del §12.
     std::int64_t quotesRequested() const;
+    std::size_t quoteWorkers() const { return pool_.workers(); }
     std::int64_t quotesLate() const;
 
 private:
@@ -62,6 +64,11 @@ private:
     const std::int64_t quoteTimeoutMs_;    // REAL
     const std::int64_t acceptTimeoutMs_;   // SIMULADO
     QuoteFn quote_;
+
+    // Las estimaciones corren en un grupo acotado de trabajadores, tantos como
+    // nucleos tenga la maquina, en vez de un hilo nuevo por candidato. Con 64
+    // couriers eso serian 64 hilos del sistema operativo por cada orden.
+    QuotePool pool_;
 
     // Las estimaciones que llegaron tarde se guardan aca en vez de destruirse. El
     // destructor de un future de std::async BLOQUEA hasta que la tarea termine, asi que

@@ -64,7 +64,12 @@ int main() {
         const SimClock clock(1.0);   // tiempo real: nadie llega a moverse
         EventLog log("tests/bin/disp_best.log", clock);
         OrderBook book(50, clock, log);
-        const SimContext ctx{graph, clock, log, book};
+        Restaurants restaurants;
+        for (const RestaurantConfig& r : cfg.restaurants) {
+            restaurants.emplace(r.id,
+                                std::make_unique<Restaurant>(r.id, r.pickupSlots));
+        }
+        const SimContext ctx{graph, clock, log, book, restaurants};
 
         // tres couriers a distancias muy distintas del restaurante
         std::vector<std::unique_ptr<CourierActor>> fleet;
@@ -106,7 +111,12 @@ int main() {
         const SimClock clock(1.0);
         EventLog log("tests/bin/disp_parallel.log", clock);
         OrderBook book(50, clock, log);
-        const SimContext ctx{graph, clock, log, book};
+        Restaurants restaurants;
+        for (const RestaurantConfig& r : cfg.restaurants) {
+            restaurants.emplace(r.id,
+                                std::make_unique<Restaurant>(r.id, r.pickupSlots));
+        }
+        const SimContext ctx{graph, clock, log, book, restaurants};
 
         std::vector<std::unique_ptr<CourierActor>> fleet;
         for (int i = 0; i < 8; ++i) {
@@ -149,7 +159,12 @@ int main() {
         const SimClock clock(1.0);
         EventLog log("tests/bin/disp_timeout.log", clock);
         OrderBook book(50, clock, log);
-        const SimContext ctx{graph, clock, log, book};
+        Restaurants restaurants;
+        for (const RestaurantConfig& r : cfg.restaurants) {
+            restaurants.emplace(r.id,
+                                std::make_unique<Restaurant>(r.id, r.pickupSlots));
+        }
+        const SimContext ctx{graph, clock, log, book, restaurants};
 
         std::vector<std::unique_ptr<CourierActor>> fleet;
         for (int i = 0; i < 4; ++i) {
@@ -192,7 +207,12 @@ int main() {
         const SimClock clock(1.0);
         EventLog log("tests/bin/disp_throw.log", clock);
         OrderBook book(50, clock, log);
-        const SimContext ctx{graph, clock, log, book};
+        Restaurants restaurants;
+        for (const RestaurantConfig& r : cfg.restaurants) {
+            restaurants.emplace(r.id,
+                                std::make_unique<Restaurant>(r.id, r.pickupSlots));
+        }
+        const SimContext ctx{graph, clock, log, book, restaurants};
 
         std::vector<std::unique_ptr<CourierActor>> fleet;
         for (int i = 0; i < 4; ++i) {
@@ -225,7 +245,12 @@ int main() {
         const SimClock clock(1.0);
         EventLog log("tests/bin/disp_nocourier.log", clock);
         OrderBook book(50, clock, log);
-        const SimContext ctx{graph, clock, log, book};
+        Restaurants restaurants;
+        for (const RestaurantConfig& r : cfg.restaurants) {
+            restaurants.emplace(r.id,
+                                std::make_unique<Restaurant>(r.id, r.pickupSlots));
+        }
+        const SimContext ctx{graph, clock, log, book, restaurants};
 
         std::vector<std::unique_ptr<CourierActor>> fleet;   // flota vacia: nadie puede
         cfg.acceptTimeoutMs = 0;                            // vence de inmediato

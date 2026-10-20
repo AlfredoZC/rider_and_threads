@@ -1,0 +1,110 @@
+# Analisis de memoria con AddressSanitizer + LeakSanitizer (DP.11)
+
+Fecha: 2026-10-19T22:31:51-04:00
+Version: g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+
+Compilacion:
+  cmake -DENABLE_ASAN=ON .. && make
+
+Ejecucion, con la ventana abierta y durante 25 segundos reales:
+  ASAN_OPTIONS=detect_leaks=1 ./delivery_sim config.json --log events.log
+  cerrado con SIGINT
+
+Carga: rafagas de hasta 12 ordenes, probabilidad de averia 0.15, timeScale 300.
+Resultado de la corrida:
+  {"created":288,"delivered":72,"rejected":167,"pending":49,"reassigned":0,"breakdowns":0,"avgDeliveryMs":1132614,"maxDeliveryMs":1891000,"deliveredPerCourier":{"c1":11,"c2":8,"c3":9,"c4":9,"c5":8,"c6":9,"c7":10,"c8":8}}
+
+## Resultado
+
+  Errores de memoria ................ 0
+  (sin accesos fuera de rango, sin uso despues de liberar, sin doble liberacion)
+
+  Fugas ............................. 320 bytes en 3 asignaciones
+  Fugas atribuibles a codigo propio . 0
+
+## Sobre las 320 fugas
+
+Las tres provienen de libfontconfig, llamada desde FcInit a traves de libQt5Gui, que
+es lo que OpenCV usa para la ventana. Se asignan una sola vez al inicializar el
+sistema de fuentes y el sistema operativo las recupera al terminar el proceso.
+
+Ninguna traza menciona delivery_sim ni un archivo de src/. Se comprobo filtrando la
+salida completa por los nombres de los archivos del proyecto: cero coincidencias.
+
+Librerias que aparecen en las trazas:
+       24 libexpat.so
+       23 libfontconfig.so
+        9 libQt5Gui.so
+        2 libQt5XcbQpa.so
+
+## Salida completa
+
+
+=================================================================
+==41935==ERROR: LeakSanitizer: detected memory leaks
+
+Direct leak of 256 byte(s) in 1 object(s) allocated from:
+    #0 0x76464c8fd9c7 in malloc ../../../../src/libsanitizer/asan/asan_malloc_linux.cpp:69
+    #1 0x76463b1d17fc  (/lib/x86_64-linux-gnu/libfontconfig.so.1+0x227fc) (BuildId: 9ea8985291d6ca9e904a796a5767d191039d813d)
+    #2 0x76463b1d5ed8  (/lib/x86_64-linux-gnu/libfontconfig.so.1+0x26ed8) (BuildId: 9ea8985291d6ca9e904a796a5767d191039d813d)
+    #3 0x76463b1e4331  (/lib/x86_64-linux-gnu/libfontconfig.so.1+0x35331) (BuildId: 9ea8985291d6ca9e904a796a5767d191039d813d)
+    #4 0x76463d5b4518  (/lib/x86_64-linux-gnu/libexpat.so.1+0xe518) (BuildId: 8ae4253012c773ce4f3ceb73efbd6dbd47fd9510)
+    #5 0x76463d5b57d2  (/lib/x86_64-linux-gnu/libexpat.so.1+0xf7d2) (BuildId: 8ae4253012c773ce4f3ceb73efbd6dbd47fd9510)
+    #6 0x76463d5b5ef7  (/lib/x86_64-linux-gnu/libexpat.so.1+0xfef7) (BuildId: 8ae4253012c773ce4f3ceb73efbd6dbd47fd9510)
+    #7 0x76463d5b8b40  (/lib/x86_64-linux-gnu/libexpat.so.1+0x12b40) (BuildId: 8ae4253012c773ce4f3ceb73efbd6dbd47fd9510)
+    #8 0x76463d5aa46e  (/lib/x86_64-linux-gnu/libexpat.so.1+0x446e) (BuildId: 8ae4253012c773ce4f3ceb73efbd6dbd47fd9510)
+    #9 0x76463d5af963 in XML_ParseBuffer (/lib/x86_64-linux-gnu/libexpat.so.1+0x9963) (BuildId: 8ae4253012c773ce4f3ceb73efbd6dbd47fd9510)
+    #10 0x76463b1de83d  (/lib/x86_64-linux-gnu/libfontconfig.so.1+0x2f83d) (BuildId: 9ea8985291d6ca9e904a796a5767d191039d813d)
+    #11 0x76463b1df22c  (/lib/x86_64-linux-gnu/libfontconfig.so.1+0x3022c) (BuildId: 9ea8985291d6ca9e904a796a5767d191039d813d)
+    #12 0x76463b1df478  (/lib/x86_64-linux-gnu/libfontconfig.so.1+0x30478) (BuildId: 9ea8985291d6ca9e904a796a5767d191039d813d)
+    #13 0x76463b1e2436  (/lib/x86_64-linux-gnu/libfontconfig.so.1+0x33436) (BuildId: 9ea8985291d6ca9e904a796a5767d191039d813d)
+    #14 0x76463d5b4518  (/lib/x86_64-linux-gnu/libexpat.so.1+0xe518) (BuildId: 8ae4253012c773ce4f3ceb73efbd6dbd47fd9510)
+    #15 0x76463d5b57d2  (/lib/x86_64-linux-gnu/libexpat.so.1+0xf7d2) (BuildId: 8ae4253012c773ce4f3ceb73efbd6dbd47fd9510)
+    #16 0x76463d5b5ef7  (/lib/x86_64-linux-gnu/libexpat.so.1+0xfef7) (BuildId: 8ae4253012c773ce4f3ceb73efbd6dbd47fd9510)
+    #17 0x76463d5b8b40  (/lib/x86_64-linux-gnu/libexpat.so.1+0x12b40) (BuildId: 8ae4253012c773ce4f3ceb73efbd6dbd47fd9510)
+    #18 0x76463d5aa46e  (/lib/x86_64-linux-gnu/libexpat.so.1+0x446e) (BuildId: 8ae4253012c773ce4f3ceb73efbd6dbd47fd9510)
+    #19 0x76463d5af963 in XML_ParseBuffer (/lib/x86_64-linux-gnu/libexpat.so.1+0x9963) (BuildId: 8ae4253012c773ce4f3ceb73efbd6dbd47fd9510)
+    #20 0x76463b1de83d  (/lib/x86_64-linux-gnu/libfontconfig.so.1+0x2f83d) (BuildId: 9ea8985291d6ca9e904a796a5767d191039d813d)
+    #21 0x76463b1df22c  (/lib/x86_64-linux-gnu/libfontconfig.so.1+0x3022c) (BuildId: 9ea8985291d6ca9e904a796a5767d191039d813d)
+    #22 0x76463b1c63b5  (/lib/x86_64-linux-gnu/libfontconfig.so.1+0x173b5) (BuildId: 9ea8985291d6ca9e904a796a5767d191039d813d)
+    #23 0x76463b1c11c0  (/lib/x86_64-linux-gnu/libfontconfig.so.1+0x121c0) (BuildId: 9ea8985291d6ca9e904a796a5767d191039d813d)
+    #24 0x76463b1c66bc in FcInit (/lib/x86_64-linux-gnu/libfontconfig.so.1+0x176bc) (BuildId: 9ea8985291d6ca9e904a796a5767d191039d813d)
+    #25 0x764628391048  (/lib/x86_64-linux-gnu/libQt5XcbQpa.so.5+0xe2048) (BuildId: 03a19e023af57550dcee7c99d4bb9691529eeb20)
+    #26 0x76464a03b4c9  (/lib/x86_64-linux-gnu/libQt5Gui.so.5+0x23b4c9) (BuildId: c6cdbf039da13141bbafbf2570e6cd4e97997262)
+    #27 0x76464a04185c in QFontDatabase::findFont(QFontDef const&, int, bool) (/lib/x86_64-linux-gnu/libQt5Gui.so.5+0x24185c) (BuildId: c6cdbf039da13141bbafbf2570e6cd4e97997262)
+    #28 0x76464a042267 in QFontDatabase::load(QFontPrivate const*, int) (/lib/x86_64-linux-gnu/libQt5Gui.so.5+0x242267) (BuildId: c6cdbf039da13141bbafbf2570e6cd4e97997262)
+    #29 0x76464a0133aa in QFontPrivate::engineForScript(int) const (/lib/x86_64-linux-gnu/libQt5Gui.so.5+0x2133aa) (BuildId: c6cdbf039da13141bbafbf2570e6cd4e97997262)
+
+Indirect leak of 64 byte(s) in 2 object(s) allocated from:
+    #0 0x76464c8fd340 in calloc ../../../../src/libsanitizer/asan/asan_malloc_linux.cpp:77
+    #1 0x76463b1d5e6f  (/lib/x86_64-linux-gnu/libfontconfig.so.1+0x26e6f) (BuildId: 9ea8985291d6ca9e904a796a5767d191039d813d)
+    #2 0x76463b1e4331  (/lib/x86_64-linux-gnu/libfontconfig.so.1+0x35331) (BuildId: 9ea8985291d6ca9e904a796a5767d191039d813d)
+    #3 0x76463d5b4518  (/lib/x86_64-linux-gnu/libexpat.so.1+0xe518) (BuildId: 8ae4253012c773ce4f3ceb73efbd6dbd47fd9510)
+    #4 0x76463d5b57d2  (/lib/x86_64-linux-gnu/libexpat.so.1+0xf7d2) (BuildId: 8ae4253012c773ce4f3ceb73efbd6dbd47fd9510)
+    #5 0x76463d5b5ef7  (/lib/x86_64-linux-gnu/libexpat.so.1+0xfef7) (BuildId: 8ae4253012c773ce4f3ceb73efbd6dbd47fd9510)
+    #6 0x76463d5b8b40  (/lib/x86_64-linux-gnu/libexpat.so.1+0x12b40) (BuildId: 8ae4253012c773ce4f3ceb73efbd6dbd47fd9510)
+    #7 0x76463d5aa46e  (/lib/x86_64-linux-gnu/libexpat.so.1+0x446e) (BuildId: 8ae4253012c773ce4f3ceb73efbd6dbd47fd9510)
+    #8 0x76463d5af963 in XML_ParseBuffer (/lib/x86_64-linux-gnu/libexpat.so.1+0x9963) (BuildId: 8ae4253012c773ce4f3ceb73efbd6dbd47fd9510)
+    #9 0x76463b1de83d  (/lib/x86_64-linux-gnu/libfontconfig.so.1+0x2f83d) (BuildId: 9ea8985291d6ca9e904a796a5767d191039d813d)
+    #10 0x76463b1df22c  (/lib/x86_64-linux-gnu/libfontconfig.so.1+0x3022c) (BuildId: 9ea8985291d6ca9e904a796a5767d191039d813d)
+    #11 0x76463b1df478  (/lib/x86_64-linux-gnu/libfontconfig.so.1+0x30478) (BuildId: 9ea8985291d6ca9e904a796a5767d191039d813d)
+    #12 0x76463b1e2436  (/lib/x86_64-linux-gnu/libfontconfig.so.1+0x33436) (BuildId: 9ea8985291d6ca9e904a796a5767d191039d813d)
+    #13 0x76463d5b4518  (/lib/x86_64-linux-gnu/libexpat.so.1+0xe518) (BuildId: 8ae4253012c773ce4f3ceb73efbd6dbd47fd9510)
+    #14 0x76463d5b57d2  (/lib/x86_64-linux-gnu/libexpat.so.1+0xf7d2) (BuildId: 8ae4253012c773ce4f3ceb73efbd6dbd47fd9510)
+    #15 0x76463d5b5ef7  (/lib/x86_64-linux-gnu/libexpat.so.1+0xfef7) (BuildId: 8ae4253012c773ce4f3ceb73efbd6dbd47fd9510)
+    #16 0x76463d5b8b40  (/lib/x86_64-linux-gnu/libexpat.so.1+0x12b40) (BuildId: 8ae4253012c773ce4f3ceb73efbd6dbd47fd9510)
+    #17 0x76463d5aa46e  (/lib/x86_64-linux-gnu/libexpat.so.1+0x446e) (BuildId: 8ae4253012c773ce4f3ceb73efbd6dbd47fd9510)
+    #18 0x76463d5af963 in XML_ParseBuffer (/lib/x86_64-linux-gnu/libexpat.so.1+0x9963) (BuildId: 8ae4253012c773ce4f3ceb73efbd6dbd47fd9510)
+    #19 0x76463b1de83d  (/lib/x86_64-linux-gnu/libfontconfig.so.1+0x2f83d) (BuildId: 9ea8985291d6ca9e904a796a5767d191039d813d)
+    #20 0x76463b1df22c  (/lib/x86_64-linux-gnu/libfontconfig.so.1+0x3022c) (BuildId: 9ea8985291d6ca9e904a796a5767d191039d813d)
+    #21 0x76463b1c63b5  (/lib/x86_64-linux-gnu/libfontconfig.so.1+0x173b5) (BuildId: 9ea8985291d6ca9e904a796a5767d191039d813d)
+    #22 0x76463b1c11c0  (/lib/x86_64-linux-gnu/libfontconfig.so.1+0x121c0) (BuildId: 9ea8985291d6ca9e904a796a5767d191039d813d)
+    #23 0x76463b1c66bc in FcInit (/lib/x86_64-linux-gnu/libfontconfig.so.1+0x176bc) (BuildId: 9ea8985291d6ca9e904a796a5767d191039d813d)
+    #24 0x764628391048  (/lib/x86_64-linux-gnu/libQt5XcbQpa.so.5+0xe2048) (BuildId: 03a19e023af57550dcee7c99d4bb9691529eeb20)
+    #25 0x76464a03b4c9  (/lib/x86_64-linux-gnu/libQt5Gui.so.5+0x23b4c9) (BuildId: c6cdbf039da13141bbafbf2570e6cd4e97997262)
+    #26 0x76464a04185c in QFontDatabase::findFont(QFontDef const&, int, bool) (/lib/x86_64-linux-gnu/libQt5Gui.so.5+0x24185c) (BuildId: c6cdbf039da13141bbafbf2570e6cd4e97997262)
+    #27 0x76464a042267 in QFontDatabase::load(QFontPrivate const*, int) (/lib/x86_64-linux-gnu/libQt5Gui.so.5+0x242267) (BuildId: c6cdbf039da13141bbafbf2570e6cd4e97997262)
+    #28 0x76464a0133aa in QFontPrivate::engineForScript(int) const (/lib/x86_64-linux-gnu/libQt5Gui.so.5+0x2133aa) (BuildId: c6cdbf039da13141bbafbf2570e6cd4e97997262)
+    #29 0x76464a032be7 in QFontMetrics::height() const (/lib/x86_64-linux-gnu/libQt5Gui.so.5+0x232be7) (BuildId: c6cdbf039da13141bbafbf2570e6cd4e97997262)
+
+SUMMARY: AddressSanitizer: 320 byte(s) leaked in 3 allocation(s).

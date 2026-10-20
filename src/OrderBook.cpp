@@ -62,34 +62,44 @@ bool OrderBook::admit(Order order) {
 
     Event event;
     event.order = order.id;
+
+    // Toda orden que entra se registra como creada, incluida la que se va a rechazar
+    // enseguida por cola llena. El §6 exige que cada contador del resumen sea igual a
+    // la cantidad de lineas que coinciden en el log, y el resumen la cuenta en created
+    // porque la identidad created = delivered + rejected + pending lo obliga. Si el log
+    // no tuviera su orderCreated, el resumen diria 86 y el log 68.
+    //
+    // Y ademas cuenta la historia verdadera: la orden existio, se le asigno un id y un
+    // restaurante, y recien despues se rechazo.
+    event.name = EventName::kOrderCreated;
+    // El §6 lista restaurant solo en orderCreated, pickupStarted y orderPickedUp.
     event.restaurant = order.restaurantId;
-    event.from = order.pickupNode;
-    event.to = order.dropoffNode;
+    // write() devuelve la t que uso: se guarda como createdMs para que el log y la
+    // orden cuenten exactamente la misma historia, no dos que difieren en unos ms.
+    order.createdMs = log_.write(event);
+    ++stats_.created;
 
     // Verificar y actuar, los dos adentro del mismo candado.
     if (pending_ >= maxPending_) {
         order.state = OrderState::rejected;
         order.rejectReason = RejectReason::queueFull;
-        event.name = EventName::kOrderRejected;
-        event.reason = toString(RejectReason::queueFull);
-        order.createdMs = log_.write(event);
+
+        Event rejected;
+        rejected.name = EventName::kOrderRejected;
+        rejected.order = order.id;
+        rejected.reason = toString(RejectReason::queueFull);
+        log_.write(rejected);
+
         orders_.emplace(order.id, std::move(order));
-        ++stats_.created;
         ++stats_.rejected;
         return false;
     }
 
-    event.name = EventName::kOrderCreated;
-    // write() devuelve la t que uso: se guarda como createdMs para que el log y la
-    // orden cuenten exactamente la misma historia, no dos que difieren en unos ms.
-    order.createdMs = log_.write(event);
     order.state = OrderState::created;
     orders_.emplace(order.id, std::move(order));
     ++pending_;
-    ++stats_.created;
     admitted = true;
     return true;
-
 }
 
 bool OrderBook::reject(OrderId id, RejectReason reason) {
@@ -107,7 +117,6 @@ bool OrderBook::reject(OrderId id, RejectReason reason) {
     Event event;
     event.name = EventName::kOrderRejected;
     event.order = id;
-    event.restaurant = it->second.restaurantId;
     event.reason = toString(reason);
     log_.write(event);
     return true;
@@ -132,7 +141,6 @@ bool OrderBook::unassign(OrderId id, bool countAsReassigned) {
         Event event;
         event.name = EventName::kOrderReassigned;
         event.order = id;
-        event.restaurant = it->second.restaurantId;
         log_.write(event);
     }
     return true;
@@ -158,7 +166,6 @@ bool OrderBook::assign(OrderId id, CourierId courier) {
     event.name = EventName::kOrderAssigned;
     event.order = id;
     event.courier = courier;
-    event.restaurant = it->second.restaurantId;
     it->second.assignedMs = log_.write(event);
     return true;
 }
@@ -198,7 +205,6 @@ bool OrderBook::delivered(OrderId id, CourierId courier) {
     event.name = EventName::kOrderDelivered;
     event.order = id;
     event.courier = courier;
-    event.to = it->second.dropoffNode;
     it->second.deliveredMs = log_.write(event);
 
     // Los numeros del resumen (§6) se acumulan en el MISMO candado que el cambio de
@@ -220,9 +226,46 @@ std::int64_t OrderBook::markRemainingAsPending() {
         // rechazadas no se tocan.
         if (setState(entry.second, OrderState::pending)) {
             ++marked;
+            ++markedPending_;
         }
     }
     return marked;
+}
+
+bool OrderBook::handOver(OrderId id, CourierId from, CourierId to) {
+    const std::lock_guard<std::mutex> guard(mutex_);
+    const auto it = orders_.find(id);
+    // Solo puede traspasarla quien la tiene: sin este chequeo, un courier podria
+    // quedarse con ordenes de otro.
+    if (it == orders_.end() || it->second.assignedCourier != from) {
+        return false;
+    }
+    if (isFinalState(it->second.state)) {
+        return false;   // ya termino: no hay nada que traspasar
+    }
+    it->second.assignedCourier = to;
+    it->second.reassigned = true;
+    ++stats_.reassigned;
+
+    Event event;
+    event.name = EventName::kOrderReassigned;
+    event.order = id;
+    // El §6 define from y to como los ids de los COURIERS que entregan y reciben, con
+    // el mismo formato que el campo courier del resto de los eventos.
+    event.from = "c" + std::to_string(from);
+    event.to = "c" + std::to_string(to);
+    log_.write(event);
+    return true;
+}
+
+void OrderBook::recordBreakdown(CourierId courier) {
+    const std::lock_guard<std::mutex> guard(mutex_);
+    ++stats_.breakdowns;
+
+    Event event;
+    event.name = EventName::kCourierBreakdown;
+    event.courier = courier;
+    log_.write(event);
 }
 
 std::optional<Order> OrderBook::find(OrderId id) const {
@@ -278,7 +321,10 @@ std::vector<OrderId> OrderBook::unassignedIds() const {
 OrderStats OrderBook::stats() const {
     const std::lock_guard<std::mutex> guard(mutex_);
     OrderStats copy = stats_;
-    copy.pending = static_cast<std::int64_t>(pending_);
+    // Durante la corrida son las vivas; despues de cerrar, las que quedaron en
+    // estado pending. Sumar ambas da el valor correcto en los dos momentos, porque
+    // al marcarlas una baja exactamente lo que la otra sube.
+    copy.pending = static_cast<std::int64_t>(pending_) + markedPending_;
     copy.avgDeliveryMs =
         stats_.delivered > 0 ? deliverySumMs_ / stats_.delivered : 0;
     return copy;
