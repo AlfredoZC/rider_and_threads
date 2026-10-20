@@ -192,13 +192,43 @@ bool CourierActor::offer(const Order& order) {
         // consultar primero y ofrecer despues, dos ofertas simultaneas se pasarian de
         // bagCapacity. Es el mismo check-then-act del maxPending del OrderBook.
         if (stopRequested_ || state_.state == CourierState::brokenDown ||
-            !hasRoom(state_)) {
+            !hasRoomLocked()) {
             return false;
         }
         state_.bag.push_back(order.id);
     }
     cv_.notify_one();   // fuera del candado: si no, despertaria para volver a dormirse
     return true;
+}
+
+bool CourierActor::hasRoomLocked() const {
+    // Los lugares reservados cuentan como ocupados: si no, dos reservas simultaneas
+    // pasarian las dos la verificacion y la bolsa terminaria con una orden de mas.
+    return state_.bag.size() + static_cast<std::size_t>(reserved_) <
+           static_cast<std::size_t>(state_.bagCapacity);
+}
+
+bool CourierActor::reserve(const Order&) {
+    const std::lock_guard<std::mutex> guard(mutex_);
+    if (stopRequested_ || state_.state == CourierState::brokenDown || !hasRoomLocked()) {
+        return false;
+    }
+    ++reserved_;
+    return true;
+}
+
+void CourierActor::commitReservation(const Order& order) {
+    {
+        const std::lock_guard<std::mutex> guard(mutex_);
+        --reserved_;
+        state_.bag.push_back(order.id);
+    }
+    cv_.notify_one();
+}
+
+void CourierActor::cancelReservation() {
+    const std::lock_guard<std::mutex> guard(mutex_);
+    --reserved_;
 }
 
 void CourierActor::setCourierState(CourierState s) {
@@ -286,11 +316,22 @@ std::vector<OrderId> CourierActor::tryHandOverTo(CourierActor& target) {
     if (state_.bag.empty() || state_.state == CourierState::brokenDown) {
         return {};
     }
+    // Con una reserva a medio camino no se puede averiar: el dispatcher ya la registro
+    // en el libro y va a confirmarla en microsegundos, y esa orden no esta en la bolsa,
+    // asi que el traspaso la dejaria en manos de un courier fuera de servicio.
+    if (reserved_ > 0) {
+        return {};
+    }
     if (target.stopRequested_ || target.state_.state == CourierState::brokenDown) {
         return {};
     }
+    const std::size_t ocupados =
+        target.state_.bag.size() + static_cast<std::size_t>(target.reserved_);
+    if (ocupados >= static_cast<std::size_t>(target.state_.bagCapacity)) {
+        return {};
+    }
     const std::size_t libre =
-        static_cast<std::size_t>(target.state_.bagCapacity) - target.state_.bag.size();
+        static_cast<std::size_t>(target.state_.bagCapacity) - ocupados;
     if (state_.bag.size() > libre) {
         return {};   // todo-o-nada: si no entran todas, no se mueve ninguna
     }

@@ -127,5 +127,56 @@ int main() {
         std::cout << "  " << kRounds << " ciclos arrancar/parar sin un solo cuelgue\n";
     }
 
+    // --- reserva en dos fases: el agujero que encontro el validador
+    //
+    // El dispatcher registraba la asignacion en el libro y despues le entregaba la orden
+    // al courier. En ese orden, entre un paso y el otro el courier puede llenarse, la
+    // entrega falla con orderAssigned ya escrito y la orden tiene que volver a la cola,
+    // cosa que el §6 no sabe representar. La reserva invierte el orden: primero se aparta
+    // el lugar, y recien despues se registra.
+    {
+        CourierActor actor(1, cfg.startNode, 2, ctx);   // bolsa de dos
+
+        Order a;
+        a.id = 1;
+        Order b;
+        b.id = 2;
+        Order c;
+        c.id = 3;
+
+        // Dos reservas caben; la tercera no, aunque la bolsa siga vacia. Los lugares
+        // apartados cuentan como ocupados: si no, dos reservas simultaneas pasarian las
+        // dos la verificacion y la bolsa terminaria con una orden de mas.
+        assert(actor.reserve(a));
+        assert(actor.reserve(b));
+        assert(!actor.reserve(c));
+        assert(actor.snapshot().bag.empty());        // reservar no mete nada en la bolsa
+
+        // Confirmar una la mete en la bolsa y libera su reserva.
+        actor.commitReservation(a);
+        assert(actor.snapshot().bag.size() == 1);
+        assert(!actor.reserve(c));                   // una confirmada + una reservada = 2
+
+        // Cancelar devuelve el lugar sin tocar la bolsa.
+        actor.cancelReservation();
+        assert(actor.snapshot().bag.size() == 1);
+        assert(actor.reserve(c));                    // ahora si entra
+        actor.commitReservation(c);
+        assert(actor.snapshot().bag.size() == 2);
+        assert(!actor.reserve(b));                   // bolsa llena
+        std::cout << "  reserve/commit/cancel respetan bagCapacity sin tocar la bolsa\n";
+    }
+
+    // --- un courier al que ya le pidieron parar no acepta reservas: si las aceptara, el
+    // dispatcher registraria una asignacion que nadie va a repartir
+    {
+        CourierActor actor(1, cfg.startNode, 3, ctx);
+        actor.requestStop();
+        Order a;
+        a.id = 1;
+        assert(!actor.reserve(a));
+        std::cout << "  un courier detenido rechaza la reserva\n";
+    }
+
     std::cout << "  courier actor ok\n";
 }
