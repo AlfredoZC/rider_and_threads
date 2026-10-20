@@ -1,0 +1,44 @@
+# Pool acotado de estimaciones (DP.4, concepto 01 del §10)
+
+Fecha: 2026-10-19T23:29:20-04:00
+Maquina: hardware_concurrency() = 6
+
+## Que se cambio
+
+El dispatcher lanzaba cada estimacion con std::async(launch::async), que crea un hilo
+del sistema operativo por candidato. Ahora las encola en un grupo fijo de
+trabajadores, tantos como nucleos tenga la maquina, y cada tarea entrega su resultado
+por un promise.
+
+## Medicion
+
+Configuracion del §11 que mas exige: 64 couriers, un pedido cada 2 s, rafagas de 12,
+maxPending 400, 60 minutos simulados. Misma semilla.
+
+                                   antes    despues
+  CPU de sistema ................. 0.79 s    0.53 s   (-33 %)
+  CPU de usuario ................ 11.22 s   12.00 s
+  tiempo total .................. 12.07 s   12.05 s
+  entregadas ....................... 564       584    (+3.5 %)
+
+El tiempo de SISTEMA es el que paga la creacion de hilos, y baja un tercio. El de
+usuario sube porque el programa hace mas trabajo util: veinte entregas mas en el
+mismo tiempo.
+
+## Lo que la medicion NO respalda
+
+La justificacion inicial era que con 64 couriers habria 64 hilos vivos por orden. Al
+medir los hilos del proceso durante la corrida, antes habia 69 y despues 75: las
+estimaciones duran microsegundos, asi que los hilos del async nacen y mueren antes de
+acumularse. El beneficio real no es evitar un colapso sino acotar el uso de recursos
+y gastar menos en el sistema operativo.
+
+Los 75 de la version con pool incluyen los 6 trabajadores permanentes, que es
+precisamente el punto: la cantidad de hilos pasa a ser conocida de antemano en vez de
+depender de cuantos candidatos haya y de la suerte del planificador.
+
+## Medicion del pool aislado
+
+  8 tareas de 100 ms con 4 trabajadores ... 200 ms, maximo simultaneo 4
+  (secuencialmente habrian sido 800 ms)
+  stop() con 30 tareas en vuelo ........... las 30 respondieron, en 51 ms

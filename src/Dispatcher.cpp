@@ -17,7 +17,8 @@ Dispatcher::Dispatcher(const Config& cfg, const SimContext& ctx,
       acceptTimeoutMs_(cfg.acceptTimeoutMs),
       // El valor por defecto es la funcion misma: no hace falta envolverla en una lambda
       // si la firma coincide. Las pruebas y el experimento del §12 la reemplazan.
-      quote_(estimateDeliveryMs) {}
+      quote_(estimateDeliveryMs),
+      pool_(ctx.graph) {}
 
 
 void Dispatcher::run() {
@@ -44,6 +45,9 @@ void Dispatcher::run() {
         }
     }
     inFlight_.clear();
+
+    // El pool se para al final, cuando ya no queda nadie esperando un resultado.
+    pool_.stop();
 }
 
 void Dispatcher::dispatchOne(OrderId orderId) {
@@ -70,14 +74,13 @@ void Dispatcher::dispatchOne(OrderId orderId) {
             continue;
         }
         candidates.push_back(Candidate{
-            i, std::async(std::launch::async, [this, view, order]() {
-                // Cada tarea construye SU Router: es la memoria de trabajo de Dijkstra y
-                // no se puede compartir. Por eso no hace falta ningun candado aca.
-                Router router(ctx_.graph);
+            i, pool_.submit([this, view, order](Router& router) {
+                // El Router lo aporta el trabajador: es SU memoria de trabajo, creada
+                // una vez y reutilizada. Antes cada tarea construia la suya.
                 return quote_(router, ctx_.graph, view, order);
-
             })});
     }
+
     if (candidates.empty()) {
         return;
     }
