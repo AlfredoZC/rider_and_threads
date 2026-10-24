@@ -55,7 +55,7 @@ void Dispatcher::run() {
         sweepLateQuotes();
         const std::vector<OrderId> waiting = ctx_.book.unassignedIds();
         if (fleet_ != nullptr) {
-            fleet_->maybeSpawn(waiting.size());
+            while (fleet_->maybeSpawn(waiting.size())) {}
         }
         for (const OrderId id : waiting) {
             if (stopped()) {
@@ -64,7 +64,8 @@ void Dispatcher::run() {
             dispatchOne(id);
         }
         if (fleet_ != nullptr) {
-            fleet_->maybeSpawn(ctx_.book.unassignedIds().size());
+            const std::size_t stillWaiting = ctx_.book.unassignedIds().size();
+            while (fleet_->maybeSpawn(stillWaiting)) {}
         }
         if (!ctx_.book.waitForChange(observed, kIdleCheck)) {
             break;

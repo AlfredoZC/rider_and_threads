@@ -48,7 +48,6 @@ private:
     int bagCapacity_ = 0;
     double breakdownProbability_ = 0.0;
     std::uint32_t seed_ = 0;
-    bool thresholdArmed_ = true;
     std::uint64_t nextReinforcement_ = 0;
     std::int64_t joined_ = 0;
     std::int64_t retired_ = 0;

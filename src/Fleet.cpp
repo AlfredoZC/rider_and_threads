@@ -1,5 +1,6 @@
 #include "Fleet.h"
 
+#include <algorithm>
 #include <future>
 #include <stdexcept>
 #include <utility>
@@ -66,22 +67,20 @@ bool Fleet::maybeSpawn(std::size_t waiting) {
     if (ctx_ == nullptr || stopping_ || maxReinforcements_ == 0) {
         return false;
     }
-    if (waiting < static_cast<std::size_t>(threshold_)) {
-        thresholdArmed_ = true;
-        return false;
-    }
-    if (!thresholdArmed_) {
+    const std::size_t desired = std::min(
+        static_cast<std::size_t>(maxReinforcements_),
+        waiting / static_cast<std::size_t>(threshold_));
+    if (desired == 0) {
         return false;
     }
 
-    int active = 0;
+    std::size_t active = 0;
     for (const Entry& entry : entries_) {
         if (entry.reinforcement && entry.active) {
             ++active;
         }
     }
-    if (active >= maxReinforcements_) {
-        thresholdArmed_ = false;
+    if (active >= desired) {
         return false;
     }
 
@@ -105,7 +104,6 @@ bool Fleet::maybeSpawn(std::size_t waiting) {
         });
     } catch (...) {
         entries_.pop_back();
-        thresholdArmed_ = true;
         throw;
     }
 
@@ -118,14 +116,12 @@ bool Fleet::maybeSpawn(std::size_t waiting) {
         startGate.set_value(false);
         std::thread failed = std::move(entry.thread);
         entries_.pop_back();
-        thresholdArmed_ = true;
         lock.unlock();
         failed.join();
         throw;
     }
     ++nextReinforcement_;
     ++joined_;
-    thresholdArmed_ = false;
     startGate.set_value(true);
     return true;
 }
