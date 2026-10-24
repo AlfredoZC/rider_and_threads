@@ -13,14 +13,9 @@ std::string buildSummary(const OrderStats& stats, std::int64_t breakdowns,
     out += ",\"avgDeliveryMs\":" + std::to_string(stats.avgDeliveryMs);
     out += ",\"maxDeliveryMs\":" + std::to_string(stats.maxDeliveryMs);
 
-    // Las claves llevan el mismo prefijo que en el log ("c3"), para que un script pueda
-    // cruzar el resumen con las lineas del archivo sin traducir nada.
     out += ",\"deliveredPerCourier\":{";
     bool first = true;
     for (const auto& actor : fleet) {
-        // El dato sale del propio courier, no de un contador paralelo del resumen: el §6
-        // exige que estos valores sumen delivered, y la forma de garantizarlo es que
-        // vengan del mismo lugar donde se incrementaron.
         const Courier view = actor->snapshot();
         if (!first) {
             out += ',';

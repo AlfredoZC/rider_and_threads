@@ -1,9 +1,3 @@
-// El hilo que crea ordenes: continuamente, a intervalos aleatorios y en rafagas (§4).
-//
-// Es dueño exclusivo de su OrderFactory y de su generador aleatorio, asi que esos dos
-// no necesitan ninguna sincronizacion: un dato con un unico dueño no se protege, se
-// posee. Lo unico compartido es la bandera de parada y el contador, protegidos por su
-// candado, y el OrderBook, que se protege solo.
 #pragma once
 
 #include <condition_variable>
@@ -23,19 +17,18 @@ public:
     OrderGenerator(const OrderGenerator&) = delete;
     OrderGenerator& operator=(const OrderGenerator&) = delete;
 
-    void run();           // cuerpo del hilo
-    void requestStop();   // lo llama el hilo principal
+    void run();
+    void requestStop();
 
-    std::int64_t generated() const;   // cuantas ordenes creo, para pruebas e informe
+    std::int64_t generated() const;
 
 private:
-    std::int64_t nextIntervalMs();    // solo lo llama el hilo generador
-    int nextBurstSize();              // idem
+    std::int64_t nextIntervalMs();
+    int nextBurstSize();
 
     const SimClock& clock_;
     OrderBook& book_;
 
-    // Propiedad exclusiva del hilo generador: sin candado.
     OrderFactory factory_;
     std::mt19937 rng_;
     const std::int64_t meanIntervalMs_;
@@ -43,6 +36,6 @@ private:
 
     mutable std::mutex mutex_;
     std::condition_variable cv_;
-    bool stopRequested_ = false;      // protegido por mutex_
-    std::int64_t generated_ = 0;      // protegido por mutex_
+    bool stopRequested_ = false;
+    std::int64_t generated_ = 0;
 };

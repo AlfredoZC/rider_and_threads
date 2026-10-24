@@ -1,6 +1,3 @@
-// Configuración de la simulación (sección 5 del brief).
-// Se carga y valida por completo en main ANTES de crear cualquier hilo; después
-// es de solo lectura, así que compartirla entre hilos no puede producir data races.
 #pragma once
 
 #include <cstdint>
@@ -39,8 +36,7 @@ struct RestaurantConfig {
 };
 
 struct Config {
-    // map
-    std::filesystem::path imagePath;   // ya resuelta relativa al archivo de config
+    std::filesystem::path imagePath;
     std::string attribution;
     Bounds bounds;
 
@@ -48,37 +44,28 @@ struct Config {
     std::vector<StreetConfig> streets;
     std::vector<RestaurantConfig> restaurants;
 
-    // fleet
     int couriers = 0;
     int bagCapacity = 0;
     double speedKmh = 0.0;
     std::string startNode;
 
-    // orders
     std::int64_t meanIntervalMs = 0;
     int burstMax = 0;
     int maxPending = 0;
     std::uint32_t seed = 0;
 
-    // dispatch
-    std::int64_t quoteTimeoutMs = 0;    // tiempo REAL
-    std::int64_t acceptTimeoutMs = 0;   // tiempo SIMULADO
+    std::int64_t quoteTimeoutMs = 0;
+    std::int64_t acceptTimeoutMs = 0;
 
-    // incidents
     double breakdownProbability = 0.0;
 
-    // simulation
-    std::int64_t durationS = 0;         // 0 = hasta recibir una señal
+    std::int64_t durationS = 0;
     double timeScale = 1.0;
 };
 
-// Cualquier problema con la configuración: el mensaje ya es legible para el usuario.
 class ConfigError : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
 };
 
-// Lee y valida el archivo. Lanza ConfigError si el archivo no se puede leer, el JSON
-// está mal formado, falta una propiedad, un tipo o rango es incorrecto, o una calle /
-// restaurante / startNode refiere a un nodo inexistente.
 Config loadConfig(const std::string& path);

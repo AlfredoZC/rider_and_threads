@@ -1,27 +1,8 @@
 #!/usr/bin/env python3
-"""Valida una corrida de delivery_sim contra lo que exige el enunciado.
-
-Uso:
-    python3 tools/validate_log.py events.log salida_stdout.txt
-
-Comprueba cuatro cosas que el programa no puede verificarse a si mismo:
-
-  1. Cada linea del log es un objeto JSON completo y valido, y lleva exactamente los
-     campos que la tabla del §6 asigna a su evento.
-  2. Cada orden recorre una secuencia de estados legal y termina en un unico estado
-     final. Ninguna se entrega dos veces ni aparece en dos couriers.
-  3. La t de una orden nunca decrece a lo largo de sus eventos.
-  4. Los numeros del resumen final coinciden EXACTAMENTE con lo que dice el log:
-     created = delivered + rejected + pending, deliveredPerCourier suma delivered, y
-     cada contador es igual a la cantidad de lineas que coinciden.
-
-Devuelve 0 si todo esta bien, 1 si encuentra algun problema.
-"""
 import json
 import sys
 from collections import Counter, defaultdict
 
-# Campos que el §6 permite en cada evento, ademas de t y event.
 CAMPOS = {
     "orderCreated": {"order", "restaurant"},
     "orderAssigned": {"order", "courier"},
@@ -34,16 +15,12 @@ CAMPOS = {
     "simulationStopping": set(),
 }
 
-# A que estado lleva cada evento. Los que no cambian el estado de una orden no estan.
 LLEVA_A = {
     "orderCreated": "created",
     "orderAssigned": "assigned",
     "orderPickedUp": "pickedUp",
     "orderDelivered": "delivered",
     "orderRejected": "rejected",
-    # orderReassigned NO cambia el estado de la orden: en un traspaso por averia
-    # cambia quien la lleva, no en que etapa esta. Una ya retirada sigue retirada,
-    # con la comida en la bolsa del nuevo courier. Por eso no figura aca.
 }
 
 LEGALES = {
@@ -56,7 +33,6 @@ FINALES = {"delivered", "rejected", "pending"}
 
 MOTIVOS = {"queueFull", "unreachable", "noCourier"}
 
-
 def main(argv):
     if len(argv) != 3:
         print(__doc__)
@@ -65,12 +41,11 @@ def main(argv):
 
     errores = []
     eventos = Counter()
-    estado = {}          # orden -> estado actual
-    ultima_t = {}        # orden -> ultima t vista
-    entregas = Counter() # courier -> entregas
+    estado = {}
+    ultima_t = {}
+    entregas = Counter()
     vivas = set()
 
-    # ---------------------------------------------------------------- el log
     with open(ruta_log, encoding="utf-8") as f:
         for n, linea in enumerate(f, 1):
             linea = linea.strip()
@@ -115,7 +90,6 @@ def main(argv):
             if orden is None:
                 continue
 
-            # la t nunca decrece para una misma orden
             if orden in ultima_t and e["t"] < ultima_t[orden]:
                 errores.append(
                     f"linea {n}: la t de {orden} retrocedio de {ultima_t[orden]} a {e['t']}")
@@ -140,7 +114,6 @@ def main(argv):
             if nombre == "orderDelivered":
                 entregas[e["courier"]] += 1
 
-    # ------------------------------------------------------------ el resumen
     with open(ruta_salida, encoding="utf-8") as f:
         lineas = [l.strip() for l in f if l.strip()]
     if not lineas:
@@ -162,13 +135,11 @@ def main(argv):
             print("  " + x)
         return 1
 
-    # el invariante central del §6
     suma = resumen["delivered"] + resumen["rejected"] + resumen["pending"]
     if resumen["created"] != suma:
         errores.append(
             f"resumen: created={resumen['created']} pero delivered+rejected+pending={suma}")
 
-    # cada contador contra las lineas del log
     if resumen["delivered"] != eventos["orderDelivered"]:
         errores.append(f"resumen: delivered={resumen['delivered']} pero el log tiene "
                        f"{eventos['orderDelivered']} lineas orderDelivered")
@@ -182,12 +153,10 @@ def main(argv):
         errores.append(f"resumen: breakdowns={resumen['breakdowns']} pero el log tiene "
                        f"{eventos['courierBreakdown']} lineas courierBreakdown")
 
-    # las ordenes que el log dejo vivas son las pendientes
     if resumen["pending"] != len(vivas):
         errores.append(f"resumen: pending={resumen['pending']} pero quedaron {len(vivas)} "
                        f"ordenes sin estado final en el log")
 
-    # deliveredPerCourier suma delivered, y coincide courier por courier
     por_courier = resumen["deliveredPerCourier"]
     if sum(por_courier.values()) != resumen["delivered"]:
         errores.append(f"resumen: deliveredPerCourier suma {sum(por_courier.values())} "
@@ -201,7 +170,6 @@ def main(argv):
         errores.append(f"log: simulationStopping aparece {eventos['simulationStopping']} "
                        f"veces, tiene que aparecer una")
 
-    # ------------------------------------------------------------- resultado
     print(f"lineas de log analizadas: {sum(eventos.values())}")
     for nombre in sorted(eventos):
         print(f"  {nombre:20} {eventos[nombre]}")
@@ -214,7 +182,6 @@ def main(argv):
         return 1
     print("\nTODO CORRECTO: el log es valido y el resumen coincide con el")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv))

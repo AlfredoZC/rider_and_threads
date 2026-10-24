@@ -7,7 +7,7 @@
 
 namespace {
 constexpr std::int64_t kInfinity = std::numeric_limits<std::int64_t>::max();
-} // namespace
+}
 
 Router::Router(const CityGraph &graph)
     : graph_(graph), dist_(graph.nodeCount(), kInfinity),
@@ -16,14 +16,12 @@ Router::Router(const CityGraph &graph)
 Route Router::shortestPath(NodeIndex from, NodeIndex to) {
   Route route;
   if (from >= graph_.nodeCount() || to >= graph_.nodeCount()) {
-    return route; // found = false
+    return route;
   }
 
   std::fill(dist_.begin(), dist_.end(), kInfinity);
   std::fill(prev_.begin(), prev_.end(), kNoNode);
 
-  // (distancia acumulada, nodo). greater<> convierte la cola en un min-heap:
-  // saca siempre el nodo pendiente mas cercano, que es el corazon de Dijkstra.
   using Entry = std::pair<std::int64_t, NodeIndex>;
   std::priority_queue<Entry, std::vector<Entry>, std::greater<Entry>> queue;
 
@@ -37,10 +35,10 @@ Route Router::shortestPath(NodeIndex from, NodeIndex to) {
     const NodeIndex u = top.second;
 
     if (d > dist_[u]) {
-      continue; // entrada vieja: despues de encolarla encontramos algo mejor
+      continue;
     }
     if (u == to) {
-      break; // Dijkstra saca los nodos en orden de distancia: ya es el minimo
+      break;
     }
 
     for (const Edge &e : graph_.edgesFrom(u)) {
@@ -54,11 +52,9 @@ Route Router::shortestPath(NodeIndex from, NodeIndex to) {
   }
 
   if (dist_[to] == kInfinity) {
-    return route; // no hay camino respetando los sentidos unicos
+    return route;
   }
 
-  // El camino se reconstruye hacia atras siguiendo los predecesores, y se da
-  // vuelta.
   route.found = true;
   route.travelMs = dist_[to];
   for (NodeIndex at = to; at != kNoNode; at = prev_[at]) {

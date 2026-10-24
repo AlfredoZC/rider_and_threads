@@ -1,9 +1,3 @@
-// Pruebas de EventLog, el primer monitor del proyecto.
-//
-// Lo que de verdad importa aca no es que escriba bien un evento suelto, sino que 10
-// hilos escribiendo a la vez produzcan un archivo donde CADA linea sea un JSON valido
-// y completo. Sin el candado, dos escrituras se entrelazan y la linea deja de parsear:
-// por eso la prueba central lanza 8 hilos y despues parsea las 4000 lineas una por una.
 #include "EventLog.h"
 
 #include <cassert>
@@ -28,13 +22,12 @@ std::vector<std::string> readLines(const std::string& path) {
     return lines;
 }
 
-}  // namespace
+}
 
 int main() {
     const SimClock clock(60.0);
     const std::string path = "tests/bin/test_events.log";
 
-    // --- un evento de cada forma: solo se escriben los campos que aplican
     {
         EventLog log(path, clock);
 
@@ -61,12 +54,12 @@ int main() {
 
     const nlohmann::json a = nlohmann::json::parse(lines[0]);
     assert(a["event"] == "orderCreated");
-    assert(a["order"] == "o42");     // §6: cadena con prefijo, no numero
+    assert(a["order"] == "o42");
     assert(a["restaurant"] == "r0");
-    assert(!a.contains("from"));   // §6: from/to son ids de courier, solo en orderReassigned
+    assert(!a.contains("from"));
     assert(!a.contains("to"));
     assert(a.contains("t"));
-    assert(!a.contains("courier"));     // no aplica: no se escribe
+    assert(!a.contains("courier"));
     assert(!a.contains("reason"));
 
     const nlohmann::json b = nlohmann::json::parse(lines[1]);
@@ -76,10 +69,9 @@ int main() {
 
     const nlohmann::json c = nlohmann::json::parse(lines[2]);
     assert(c["event"] == "simulationStopping");
-    assert(!c.contains("order"));       // un evento global no lleva orden
+    assert(!c.contains("order"));
     std::cout << "  un evento por linea, solo con los campos que aplican\n";
 
-    // --- abrir un log en una ruta imposible tiene que fallar, no romperse en silencio
     {
         bool threw = false;
         try {
@@ -91,7 +83,6 @@ int main() {
         std::cout << "  una ruta invalida lanza excepcion\n";
     }
 
-    // --- LA prueba: 8 hilos escribiendo a la vez
     {
         const int kThreads = 8;
         const int kPerThread = 500;
@@ -115,8 +106,6 @@ int main() {
         const std::vector<std::string> all = readLines(path);
         assert(all.size() == static_cast<std::size_t>(kThreads * kPerThread));
 
-        // cada linea tiene que ser un JSON completo: si dos escrituras se entrelazaran,
-        // parse() lanzaria aca
         std::int64_t lastT = -1;
         std::vector<int> perCourier(kThreads + 1, 0);
         for (const std::string& line : all) {
@@ -124,8 +113,6 @@ int main() {
             assert(j["event"] == "orderDelivered");
             assert(j.contains("order") && j.contains("courier"));
 
-            // la t no puede retroceder: se toma DENTRO del candado, asi que el orden de
-            // las lineas es el orden de los tiempos
             const std::int64_t t = j["t"].get<std::int64_t>();
             assert(t >= lastT);
             lastT = t;

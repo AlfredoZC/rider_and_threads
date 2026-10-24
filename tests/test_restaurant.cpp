@@ -1,12 +1,3 @@
-// Pruebas del Restaurant: limite de slots y orden de llegada (§4).
-//
-// Dos condiciones que hay que comprobar juntas:
-//
-//   1. Nunca hay mas de pickupSlots couriers retirando a la vez. Se mide el maximo
-//      observado con un contador atomico, no se supone.
-//   2. Se atiende EN ORDEN DE LLEGADA. Un wait comun sobre "hay lugar" respetaria el
-//      limite pero dejaria entrar al que el planificador elija, y uno podria esperar
-//      indefinidamente. Aca se verifica que el orden de entrada sea el de llegada.
 #include "Restaurant.h"
 
 #include <atomic>
@@ -18,7 +9,6 @@
 #include <vector>
 
 int main() {
-    // --- el limite se respeta bajo carga
     {
         const int kSlots = 2;
         const int kCouriers = 12;
@@ -47,22 +37,19 @@ int main() {
         std::cout << "  " << kCouriers << " couriers, " << kSlots
                   << " slots: maximo simultaneo observado = " << maximo.load() << "\n";
         assert(maximo.load() <= kSlots);
-        assert(atendidos.load() == kCouriers);   // todos pasaron, ninguno quedo afuera
+        assert(atendidos.load() == kCouriers);
         assert(restaurant.inUse() == 0);
     }
 
-    // --- se atiende en orden de llegada
     {
-        Restaurant restaurant("r1", 1);   // un solo slot: el orden se ve sin ambiguedad
+        Restaurant restaurant("r1", 1);
 
-        // el primero ocupa el unico lugar
         assert(restaurant.acquire());
 
         std::mutex m;
         std::vector<int> ordenDeEntrada;
         std::vector<std::thread> hilos;
 
-        // los demas llegan de a uno, en orden conocido
         for (int i = 1; i <= 5; ++i) {
             hilos.emplace_back([&restaurant, &m, &ordenDeEntrada, i]() {
                 assert(restaurant.acquire());
@@ -72,12 +59,11 @@ int main() {
                 }
                 restaurant.release();
             });
-            // separacion suficiente para que el orden de llegada sea el del bucle
             std::this_thread::sleep_for(std::chrono::milliseconds(30));
         }
 
         assert(restaurant.waiting() == 5);
-        restaurant.release();                     // se libera el lugar: arranca la fila
+        restaurant.release();
         for (std::thread& h : hilos) { h.join(); }
 
         std::cout << "  orden de llegada 1,2,3,4,5 -> orden de entrada ";
@@ -87,10 +73,9 @@ int main() {
         assert(ordenDeEntrada == esperado);
     }
 
-    // --- al parar, nadie queda colgado en la fila (§7)
     {
         Restaurant restaurant("r2", 1);
-        assert(restaurant.acquire());             // el lugar queda ocupado
+        assert(restaurant.acquire());
 
         std::atomic<int> rechazados{0};
         std::vector<std::thread> hilos;
@@ -110,7 +95,7 @@ int main() {
                             std::chrono::steady_clock::now() - t0).count();
 
         std::cout << "  stop() libero a los 6 que hacian fila en " << ms << " ms\n";
-        assert(rechazados.load() == 6);   // ninguno quedo esperando un turno que no llega
+        assert(rechazados.load() == 6);
         assert(ms < 500);
     }
 

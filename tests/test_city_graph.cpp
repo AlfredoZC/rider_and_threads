@@ -1,5 +1,3 @@
-// Pruebas de CityGraph: cantidad de aristas dirigidas, traduccion de ids, respeto de
-// los sentidos unicos y coherencia de distancias y tiempos.
 #include "CityGraph.h"
 
 #include <algorithm>
@@ -13,14 +11,12 @@ int main() {
     std::cout << "  nodos=" << g.nodeCount() << " aristas=" << g.edgeCount() << "\n";
     assert(g.nodeCount() == cfg.nodes.size());
 
-    // 768 calles de doble sentido x2 + 259 de un sentido = 1795 aristas dirigidas
     std::size_t oneWay = 0;
     for (const StreetConfig& s : cfg.streets) {
         if (s.oneWay) { ++oneWay; }
     }
     assert(g.edgeCount() == (cfg.streets.size() - oneWay) * 2 + oneWay);
 
-    // traduccion en la frontera
     assert(g.indexOf("no_existe") == kNoNode);
     assert(g.indexOf(cfg.startNode) != kNoNode);
     assert(g.idOf(g.indexOf(cfg.startNode)) == cfg.startNode);
@@ -28,7 +24,6 @@ int main() {
         assert(g.indexOf(r.node) != kNoNode);
     }
 
-    // el sentido unico es estructural: ir contramano no existe como camino
     std::size_t checkedOneWay = 0;
     for (const StreetConfig& s : cfg.streets) {
         if (!s.oneWay) { continue; }
@@ -38,7 +33,6 @@ int main() {
         for (const Edge& e : g.edgesFrom(a)) { if (e.to == b) { aToB = true; } }
         for (const Edge& e : g.edgesFrom(b)) { if (e.to == a) { bToA = true; } }
         assert(aToB);
-        // ojo: solo vale si no existe ADEMAS otra calle b->a en el config
         bool reverseInConfig = false;
         for (const StreetConfig& t : cfg.streets) {
             if (t.from == s.to && t.to == s.from) { reverseInConfig = true; }
@@ -53,7 +47,6 @@ int main() {
     std::cout << "  sentidos unicos verificados=" << checkedOneWay << "\n";
     assert(checkedOneWay > 0);
 
-    // distancias y tiempos coherentes; nadie con aristas raras
     double minM = 1e9, maxM = 0.0;
     std::size_t isolated = 0, total = 0;
     const double msPerMeter = 3600.0 / cfg.speedKmh;

@@ -1,14 +1,3 @@
-// Pruebas del QuotePool: paralelismo acotado por el hardware.
-//
-// Lo que hay que comprobar:
-//   1. La cantidad de trabajadores la decide el hardware, y nunca es cero.
-//   2. Las tareas se ejecutan EN PARALELO: N tareas de 100 ms con N trabajadores tardan
-//      ~100 ms, no N x 100.
-//   3. Nunca corren mas tareas a la vez que trabajadores hay. El pool es un limite, no
-//      una sugerencia.
-//   4. Una excepcion en una tarea viaja al hilo que espera y se vuelve a lanzar en su
-//      get(), en vez de matar el programa (§4).
-//   5. Al parar no queda ningun future colgado ni ningun hilo abandonado (§7).
 #include "QuotePool.h"
 
 #include <atomic>
@@ -20,7 +9,7 @@
 #include <vector>
 
 #include "Config.h"
-#include "Quote.h"   // kUnreachable
+#include "Quote.h"
 
 namespace {
 
@@ -29,13 +18,12 @@ std::int64_t elapsedMs(std::chrono::steady_clock::time_point from) {
                std::chrono::steady_clock::now() - from).count();
 }
 
-}  // namespace
+}
 
 int main() {
     const Config cfg = loadConfig("config/equipetrol.json");
     const CityGraph graph(cfg);
 
-    // --- la cantidad de trabajadores sale del hardware
     {
         QuotePool pool(graph);
         std::cout << "  hardware_concurrency=" << std::thread::hardware_concurrency()
@@ -43,7 +31,6 @@ int main() {
         assert(pool.workers() > 0);
     }
 
-    // --- las tareas corren en paralelo, y nunca mas de las que hay trabajadores
     {
         const unsigned kWorkers = 4;
         const int kJobs = 8;
@@ -73,11 +60,10 @@ int main() {
         std::cout << "  " << kJobs << " tareas de 100 ms con " << kWorkers
                   << " trabajadores: " << ms << " ms, maximo simultaneo "
                   << maximo.load() << "\n";
-        assert(maximo.load() <= static_cast<int>(kWorkers));   // el limite se respeta
-        assert(ms < 400);   // dos tandas de 100 ms; secuencial habrian sido 800
+        assert(maximo.load() <= static_cast<int>(kWorkers));
+        assert(ms < 400);
     }
 
-    // --- una tarea que lanza no tumba el programa: la excepcion viaja por el future
     {
         QuotePool pool(graph, 2);
         auto buena = pool.submit([](Router&) { return std::int64_t{7}; });
@@ -96,7 +82,6 @@ int main() {
         std::cout << "  la excepcion de una tarea se relanza en get(), sin matar nada\n";
     }
 
-    // --- el Router del trabajador sirve para calcular de verdad
     {
         QuotePool pool(graph, 2);
         const NodeIndex from = graph.indexOf(cfg.startNode);
@@ -110,7 +95,6 @@ int main() {
         assert(ms > 0);
     }
 
-    // --- al parar, nada queda colgado
     {
         QuotePool pool(graph, 3);
         std::vector<std::future<std::int64_t>> futures;
@@ -124,7 +108,6 @@ int main() {
         pool.stop();
         const std::int64_t ms = elapsedMs(t0);
 
-        // ninguno quedo sin respuesta: o dio su valor o dio una excepcion
         int respondidos = 0;
         for (auto& f : futures) {
             try {
@@ -138,7 +121,7 @@ int main() {
         std::cout << "  stop() con 30 tareas en vuelo: todas respondieron, en " << ms
                   << " ms\n";
 
-        pool.stop();   // idempotente
+        pool.stop();
     }
 
     std::cout << "  quote pool ok\n";

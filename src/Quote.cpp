@@ -20,8 +20,6 @@ std::int64_t estimateDeliveryMs(Router& router, const CityGraph& graph,
     return kUnreachable;
   }
 
-  // Si el courier llega antes de que la comida este lista, espera: lo que manda
-  // es el mayor de los dos, no la suma.
   const std::int64_t readyAt = std::max(toPickup.travelMs, order.prepMs);
   return readyAt + toDropoff.travelMs;
 }

@@ -1,27 +1,12 @@
 #!/usr/bin/env bash
-# Compila y corre las pruebas de este proyecto.
-#
-#   bash tests/run.sh              -> corre todas
-#   bash tests/run.sh city_graph   -> corre solo tests/test_city_graph.cpp
-#
-# Las pruebas quedan FUERA del CMakeLists a proposito: el brief exige que
-# "cmake .. && make" produzca exactamente el target delivery_sim y sin warnings.
-#
-# Se enlazan todos los src/*.cpp menos main.cpp, asi ningun test necesita OpenCV.
-# No se pasa -DNDEBUG: si se pasara, los assert desaparecerian y los tests no
-# probarian nada.
 set -u
 
-cd "$(dirname "$0")/.." || exit 1          # siempre desde la raiz del proyecto,
-                                           # para que "config/..." resuelva bien
+cd "$(dirname "$0")/.." || exit 1
 
 FLAGS="-std=c++17 -Wall -Wextra -g -pthread -Isrc -Ithird_party"
 SRC=$(ls src/*.cpp | grep -v '^src/main\.cpp$')
 mkdir -p tests/bin
 
-# Ningun archivo de src/ aparte de main.cpp puede definir main(): si lo hace, el build
-# oficial (cmake usa file(GLOB src/*.cpp)) falla con "multiple definition of main".
-# Los programas de prueba van en tests/, no en src/.
 STRAY=$(grep -l '^[[:space:]]*int[[:space:]]\+main[[:space:]]*(' $SRC 2>/dev/null)
 if [ -n "$STRAY" ]; then
     echo "ERROR: estos archivos de src/ definen main() y rompen el build oficial:"
@@ -60,8 +45,6 @@ echo
 if [ $fail -eq 0 ]; then
     echo "TODAS LAS PRUEBAS PASARON"
 else
-    # El resumen va tambien a stderr: asi "run.sh | tail -n" no lo esconde cuando
-    # la salida es larga, que es como se nos paso una prueba rota durante dos PRs.
     echo "HUBO PRUEBAS FALLIDAS" >&2
     echo "HUBO PRUEBAS FALLIDAS"
 fi
