@@ -15,6 +15,7 @@ sobre una imagen real de OpenStreetMap.
 1. [Dependencias](#1-dependencias)
 2. [Compilación y ejecución](#2-compilación-y-ejecución)
 3. [Entrada y salida](#3-entrada-y-salida)
+   - [Variante D: flota de refuerzo](#variante-d-flota-de-refuerzo)
 4. [Estructura del repositorio](#4-estructura-del-repositorio)
 5. [El mapa](#5-el-mapa)
 6. [Decisiones de diseño](#6-decisiones-de-diseño)
@@ -103,20 +104,55 @@ ventana se abre, que es lo que pide el §2 del enunciado.
 ## 3. Entrada y salida
 
 - **Entrada:** archivo JSON con el formato de la sección 5 del enunciado (`map`, `nodes`, `streets`,
-  `restaurants`, `fleet`, `orders`, `dispatch`, `incidents`, `simulation`). Una configuración inválida produce
+  `restaurants`, `fleet`, `orders`, `dispatch`, `incidents`, `simulation`) y el bloque opcional
+  `reinforcements` de la Variante D. Una configuración inválida produce
   un mensaje en `stderr` y un código de salida distinto de cero, sin iniciar la simulación.
 - **stdout:** `Simulation has started...` cuando la simulación está lista y corriendo; al final, una única línea
   JSON con el resumen (`created`, `delivered`, `rejected`, `pending`, `reassigned`, `breakdowns`,
-  `avgDeliveryMs`, `maxDeliveryMs`, `deliveredPerCourier`).
+  `avgDeliveryMs`, `maxDeliveryMs`, `deliveredPerCourier`, `reinforcementsJoined`,
+  `reinforcementsRetired`).
 > **Sobre el rechazo `unreachable`:** con `config/equipetrol.json` no puede ocurrir, porque el
 > grafo del mapa real es fuertemente conexo —desde cada restaurante se llega a los 668 nodos—.
 > Para ejercitarlo hace falta un grafo con nodos aislados, como `config/tests/unreachable.json`.
 
 - **Log de eventos:** un objeto JSON por línea (`orderCreated`, `orderAssigned`, `pickupStarted`,
   `orderPickedUp`, `orderDelivered`, `orderRejected`, `courierBreakdown`, `orderReassigned`,
-  `simulationStopping`).
+  `courierJoined`, `courierRetired`, `simulationStopping`).
 - **Ventana:** mapa de OpenStreetMap con restaurantes, destinos de entrega activos, cada moto como un punto
   que se mueve por las calles (color según estado), panel de contadores y atribución.
+
+### Variante D: flota de refuerzo
+
+El bloque es opcional. Sin él, o con `max: 0`, no se crean refuerzos. La configuración de
+demostración usa dos couriers originales y:
+
+```json
+{
+  "reinforcements": { "max": 4, "threshold": 5, "idleMs": 300000 }
+}
+```
+
+`max` limita los **refuerzos activos**, no indica cuántos deben entrar de golpe.
+El `Dispatcher` cuenta los pedidos **sin courier** (`OrderBook::unassignedIds()`), que no son
+lo mismo que los «pendientes» de la ventana: estos últimos también incluyen órdenes ya
+asignadas. Con `U` pedidos sin courier, se intenta mantener hasta
+`min(max, U / threshold)` refuerzos activos (división entera). Por ejemplo, con umbral 5:
+5–9 pedidos justifican uno, 10–14 dos, 15–19 tres y 20 cuatro. Con `max: 6`, 20 pedidos
+sin courier siguen justificando cuatro, no seis. Al bajar `U` no se expulsa inmediatamente
+a nadie: cada refuerzo se retira solo cuando lleva `idleMs` simulados con la bolsa vacía.
+Con `simulation.timeScale: 60`, los 300000 ms simulados equivalen a 5 s reales.
+
+`Fleet::maybeSpawn()` comprueba la cantidad activa, crea el siguiente ID `r0`, `r1`, etc.,
+y registra `courierJoined` bajo un mutex; dos decisiones simultáneas no superan `max` ni
+crean el mismo cupo dos veces. `Dispatcher` repite esa operación hasta cubrir la demanda
+calculada. Un refuerzo ocioso duerme con `condition_variable` hasta que recibe trabajo,
+vence su plazo o llega la señal de parada. La reserva y el retiro usan el mismo mutex del
+actor: una orden nunca entra en la bolsa después del retiro. `Fleet` conserva todos los
+hilos, incluso los de refuerzos retirados, y hace `join()` antes de imprimir el resumen.
+Los IDs no se reutilizan; `deliveredPerCourier` incluye también a los retirados.
+
+Las cifras de los experimentos posteriores corresponden a sus configuraciones históricas;
+no describen necesariamente la flota activa de `config/equipetrol.json`.
 
 ## 4. Estructura del repositorio
 
@@ -282,8 +318,8 @@ flechas tapa el mapa. La tecla `G` la muestra cuando hace falta inspeccionar la 
 
 ## 7. Esquema del programa: hilos y canales
 
-Todo lo que aparece acá está implementado y probado. Las once filas de hilos y los diez
-canales son los del código final.
+El número de hilos de courier cambia durante la corrida por la Variante D. Las cifras fijas
+que aparecen en los experimentos corresponden a las configuraciones de esas mediciones.
 
 ### Flujo de una orden, de punta a punta
 
@@ -297,6 +333,7 @@ GENERADOR   espera un intervalo exponencial (wait_for, 0% CPU)
                               |
 DISPATCHER  espera en el libro, con plazo (0% CPU) <---------------+
             toma las ordenes sin asignar
+            pide a Fleet los refuerzos justificados por la cola
             encola una estimacion POR COURIER en el QuotePool
               - un promise/future por candidato
               - plazo comun de quoteTimeoutMs REALES
@@ -310,8 +347,8 @@ DISPATCHER  espera en el libro, con plazo (0% CPU) <---------------+
 COURIER     espera en su cv (0% CPU) <-----------------------------+
             calcula su ruta con SU PROPIO Router
                       viaja tramo a tramo                <- SIN candados, segundos
-                      llega al restaurante -> pickupStarted
                       espera a que la comida este lista si llego antes
+                      toma un lugar de retiro -> pickupStarted
                       OrderBook.pickedUp()               <- candado: microsegundos
                       viaja al cliente                   <- SIN candados
                       OrderBook.delivered()              <- candado: microsegundos
@@ -340,11 +377,12 @@ comprobación ocurre dentro del candado del `OrderBook`, que dura microsegundos.
 |------|----------|---------------------|-------------|
 | main / render | 1 | Arma un cuadro, revisa teclado y señal | `cv::waitKey` (ritmo de cuadros) |
 | `OrderGenerator` | 1 | Espera un intervalo exponencial y crea 1..`burstMax` órdenes | `cv.wait_for` con predicado, interrumpible |
-| `Dispatcher` | 1 | Toma una orden, encola las estimaciones y la asigna | `OrderBook::waitForUnassigned` con plazo |
-| Trabajadores del `QuotePool` | `hardware_concurrency()` | Saca una tarea de la cola, la ejecuta y cumple su promise | `cv_.wait` con predicado |
-| `CourierActor` | `fleet.couriers` (8) | libre → restaurante → retirar → entregar | su propia `condition_variable` |
+| `Dispatcher` | 1 | Crea refuerzos según la cola, cotiza y asigna | `OrderBook::waitForChange` con plazo |
+| Trabajadores del `QuotePool` | `fleet.couriers + reinforcements.max` | Saca una tarea de la cola, la ejecuta y cumple su promise | `cv_.wait` con predicado |
+| `CourierActor` original | `fleet.couriers` (2 en el ejemplo) | libre → restaurante → retirar → entregar | su propia `condition_variable` |
+| `CourierActor` de refuerzo | 0 hasta `reinforcements.max` activos | trabaja o se retira por inactividad | `cv_.wait_until` con predicado |
 
-Con la configuración de ejemplo son 11 hilos propios más los del pool.
+`Fleet` conserva y une también los hilos de refuerzos que ya se retiraron.
 
 ### Canales entre hilos
 
@@ -455,11 +493,11 @@ qué pasaría sin él.
 
 ### 01 · Creación explícita de hilos, cada uno con un destino deliberado
 
-`src/main.cpp:396` (creación) · `src/main.cpp:475`, `:478`, `:492` (espera)
+`src/main.cpp` · `src/Fleet.cpp` · `src/QuotePool.cpp`
 
-Los once hilos se crean con `std::thread` en `main`, **después** de construir todos los
-objetos que van a usar, y cada uno se espera con `join()` antes de salir: ocho couriers, el
-generador y el dispatcher, más los trabajadores del pool.
+`main` arranca el generador y el dispatcher. `Fleet` crea los couriers originales al inicio
+y los de refuerzo durante la corrida; guarda cada `std::thread` junto con su actor y une
+todos antes del resumen. El pool gestiona sus propios trabajadores.
 
 Lanzarlos desde un constructor dejaría que un hilo viera un objeto a medio construir. Y un
 `std::thread` que se destruye sin `join()` ni `detach()` llama a `std::terminate`: el
@@ -467,15 +505,12 @@ programa moriría en el cierre, sin resumen y con código distinto de cero, viol
 
 ### 01 · Una decisión que depende del paralelismo disponible del hardware
 
-`src/QuotePool.cpp:12`
+`src/Dispatcher.cpp` · `src/QuotePool.cpp`
 
-La cantidad de trabajadores del pool sale de `std::thread::hardware_concurrency()`. Más
-trabajadores que núcleos no agregan paralelismo real, sólo cambios de contexto; menos dejan
-núcleos ociosos.
-
-La función **puede devolver cero** cuando el sistema no lo sabe, y en ese caso se eligen dos
-a mano: un pool de cero trabajadores sería un cuelgue garantizado, porque nadie atendería la
-cola.
+El dispatcher pide `fleet.couriers + reinforcements.max` trabajadores para poder cotizar
+a todos los candidatos configurados a la vez. Si se construye un `QuotePool` sin cantidad
+explícita, usa `std::thread::hardware_concurrency()`; si devuelve cero, elige dos, porque
+un pool vacío no atendería las cotizaciones.
 
 Antes cada estimación creaba su propio hilo. Medido con 64 couriers y tres corridas por
 columna, pasar al pool bajó el tiempo de CPU de sistema de 0,85 s a 0,46 s —un 46 %, con los
@@ -491,7 +526,7 @@ el dispatcher siguió de largo. Capturarlas por referencia dejaría referencias 
 variables que ya no existen.
 
 **Por referencia** — `src/SimContext.h`: el grafo, el reloj, el log y el libro se comparten
-por referencia entre los once hilos. Copiar un grafo de 668 nodos por hilo sería absurdo, y
+por referencia entre los hilos. Copiar un grafo de 668 nodos por hilo sería absurdo, y
 copiar un monitor rompería su propósito: cada hilo protegería su propia copia.
 
 **Por movimiento** — `src/OrderBook.cpp:93` y `:99`: `admit()` recibe la orden por valor y la
@@ -512,15 +547,16 @@ orden perdida, una duplicada, una en dos bolsas—.
 
 ### 03 · Funciones miembro de objetos compartidos corriendo en hilos; contenedores de hilos
 
-`src/main.cpp:396` · `src/main.cpp:377` (la flota) · `src/main.cpp:394` (los hilos)
+`src/Fleet.cpp` · `src/Fleet.h`
 
-`threads.emplace_back(&CourierActor::run, actor.get())` lanza un método de un objeto. La
-flota es un `std::vector<std::unique_ptr<CourierActor>>` y los hilos un
-`std::vector<std::thread>`, recorridos para arrancarlos y para esperarlos.
+`Fleet::Entry` guarda un `std::unique_ptr<CourierActor>` y su `std::thread`. Los originales
+arrancan con `Fleet::addAndStart()`; los refuerzos se crean en `Fleet::maybeSpawn()` bajo
+el mutex de la flota. `Fleet::joinAll()` espera cada hilo una sola vez, incluso si su
+refuerzo ya se retiró.
 
 ### 03 · Propiedad compartida que garantiza la vida del objeto; ningún puntero crudo dueño
 
-`src/QuotePool.h:60` · `src/main.cpp:377`
+`src/QuotePool.h` · `src/Fleet.h`
 
 Cada tarea del pool se guarda junto a un `std::shared_ptr<std::promise<std::int64_t>>`. Los
 dos aspectos son necesarios: `std::function` exige que lo que captura sea **copiable** y un
