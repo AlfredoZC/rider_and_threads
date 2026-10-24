@@ -16,6 +16,8 @@ constexpr const char *kOrderPickedUp = "orderPickedUp";
 constexpr const char *kOrderDelivered = "orderDelivered";
 constexpr const char *kOrderRejected = "orderRejected";
 constexpr const char *kCourierBreakdown = "courierBreakdown";
+constexpr const char *kCourierJoined = "courierJoined";
+constexpr const char *kCourierRetired = "courierRetired";
 constexpr const char *kOrderReassigned = "orderReassigned";
 constexpr const char *kSimulationStopping = "simulationStopping";
 }

@@ -52,6 +52,13 @@ void appendId(std::string &out, const char *key, char prefix, std::uint64_t valu
   out += '"';
 }
 
+void appendCourier(std::string &out, CourierId value) {
+  if (value == kNoCourier) {
+    return;
+  }
+  appendText(out, "courier", courierLabel(value));
+}
+
 }
 
 EventLog::EventLog(const std::string &path, const SimClock &clock)
@@ -68,7 +75,7 @@ std::int64_t EventLog::write(const Event &event) {
   tail += event.name;
   tail += '"';
   appendId(tail, "order", 'o', event.order);
-  appendId(tail, "courier", 'c', event.courier);
+  appendCourier(tail, event.courier);
   appendText(tail, "restaurant", event.restaurant);
   appendText(tail, "from", event.from);
   appendText(tail, "to", event.to);

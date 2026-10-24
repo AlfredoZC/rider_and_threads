@@ -10,6 +10,7 @@
 
 #include "Config.h"
 #include "CourierActor.h"
+#include "Fleet.h"
 #include "Quote.h"
 #include "QuotePool.h"
 #include "SimContext.h"
@@ -21,6 +22,7 @@ public:
 
     Dispatcher(const Config& cfg, const SimContext& ctx,
                const std::vector<std::unique_ptr<CourierActor>>& fleet);
+    Dispatcher(const Config& cfg, const SimContext& ctx, Fleet& fleet);
 
     Dispatcher(const Dispatcher&) = delete;
     Dispatcher& operator=(const Dispatcher&) = delete;
@@ -36,7 +38,7 @@ public:
 
 private:
     struct Candidate {
-        std::size_t index;
+        CourierActor* actor;
         std::future<std::int64_t> estimate;
     };
 
@@ -45,9 +47,11 @@ private:
     bool stopped() const;
 
     bool destinoInalcanzable(const Order& order);
+    std::vector<CourierActor*> activeCouriers() const;
 
     const SimContext ctx_;
-    const std::vector<std::unique_ptr<CourierActor>>& fleet_;
+    const std::vector<std::unique_ptr<CourierActor>>* legacyFleet_ = nullptr;
+    Fleet* fleet_ = nullptr;
     const std::int64_t quoteTimeoutMs_;
     const std::int64_t acceptTimeoutMs_;
     QuoteFn quote_;

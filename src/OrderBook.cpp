@@ -63,6 +63,7 @@ bool OrderBook::admit(Order order) {
     order.state = OrderState::created;
     orders_.emplace(order.id, std::move(order));
     ++pending_;
+    ++workVersion_;
     admitted = true;
     return true;
 }
@@ -96,6 +97,7 @@ bool OrderBook::unassign(OrderId id, bool countAsReassigned) {
         return false;
     }
     it->second.assignedCourier = kNoCourier;
+    ++workVersion_;
     if (countAsReassigned) {
         it->second.reassigned = true;
         ++stats_.reassigned;
@@ -105,7 +107,31 @@ bool OrderBook::unassign(OrderId id, bool countAsReassigned) {
         event.order = id;
         log_.write(event);
     }
+    work_.notify_all();
     return true;
+}
+
+std::uint64_t OrderBook::workVersion() const {
+    const std::lock_guard<std::mutex> guard(mutex_);
+    return workVersion_;
+}
+
+bool OrderBook::waitForChange(std::uint64_t& observed,
+                              std::chrono::milliseconds timeout) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    work_.wait_for(lock, timeout, [this, &observed] {
+        return stopWaiting_ || workVersion_ != observed;
+    });
+    observed = workVersion_;
+    return !stopWaiting_;
+}
+
+void OrderBook::notifyCapacityChanged() {
+    {
+        const std::lock_guard<std::mutex> guard(mutex_);
+        ++workVersion_;
+    }
+    work_.notify_all();
 }
 
 bool OrderBook::assign(OrderId id, CourierId courier) {
@@ -197,9 +223,44 @@ bool OrderBook::handOver(OrderId id, CourierId from, CourierId to) {
     Event event;
     event.name = EventName::kOrderReassigned;
     event.order = id;
-    event.from = "c" + std::to_string(from);
-    event.to = "c" + std::to_string(to);
+    event.from = courierLabel(from);
+    event.to = courierLabel(to);
     log_.write(event);
+    return true;
+}
+
+bool OrderBook::handOverBatch(const std::vector<OrderId>& ids, CourierId from,
+                              CourierId to) {
+    const std::lock_guard<std::mutex> guard(mutex_);
+    if (ids.empty()) {
+        return false;
+    }
+    for (const OrderId id : ids) {
+        const auto it = orders_.find(id);
+        if (it == orders_.end() || it->second.assignedCourier != from ||
+            isFinalState(it->second.state)) {
+            return false;
+        }
+    }
+
+    Event breakdown;
+    breakdown.name = EventName::kCourierBreakdown;
+    breakdown.courier = from;
+    log_.write(breakdown);
+    ++stats_.breakdowns;
+    for (const OrderId id : ids) {
+        Order& order = orders_.at(id);
+        order.assignedCourier = to;
+        order.reassigned = true;
+        ++stats_.reassigned;
+
+        Event event;
+        event.name = EventName::kOrderReassigned;
+        event.order = id;
+        event.from = courierLabel(from);
+        event.to = courierLabel(to);
+        log_.write(event);
+    }
     return true;
 }
 

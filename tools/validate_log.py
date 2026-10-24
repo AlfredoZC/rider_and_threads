@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import re
 import sys
 from collections import Counter, defaultdict
 
@@ -11,6 +12,8 @@ CAMPOS = {
     "orderDelivered": {"order", "courier"},
     "orderRejected": {"order", "reason"},
     "courierBreakdown": {"courier"},
+    "courierJoined": {"courier"},
+    "courierRetired": {"courier"},
     "orderReassigned": {"order", "from", "to"},
     "simulationStopping": set(),
 }
@@ -45,6 +48,9 @@ def main(argv):
     ultima_t = {}
     entregas = Counter()
     vivas = set()
+    refuerzos_unidos = set()
+    refuerzos_retirados = set()
+    simulacion_parando = False
 
     with open(ruta_log, encoding="utf-8") as f:
         for n, linea in enumerate(f, 1):
@@ -63,6 +69,11 @@ def main(argv):
                 continue
             eventos[nombre] += 1
 
+            if simulacion_parando and nombre == "orderCreated":
+                errores.append(f"linea {n}: se creo una orden tras simulationStopping")
+            if nombre == "simulationStopping":
+                simulacion_parando = True
+
             if not isinstance(e.get("t"), int):
                 errores.append(f"linea {n}: falta t o no es entero")
             extra = set(e) - {"t", "event"} - CAMPOS[nombre]
@@ -77,11 +88,25 @@ def main(argv):
             if nombre == "orderReassigned":
                 for campo in ("from", "to"):
                     valor = e.get(campo, "")
-                    if not (isinstance(valor, str) and valor.startswith("c")):
+                    if not (isinstance(valor, str) and re.fullmatch(r"[cr][0-9]+", valor)):
                         errores.append(
                             f"linea {n}: {campo}={valor!r} tiene que ser un id de courier")
                 if e.get("from") == e.get("to"):
                     errores.append(f"linea {n}: un courier se traspasa a si mismo")
+
+            for campo in ("courier", "from", "to"):
+                valor = e.get(campo)
+                if isinstance(valor, str) and re.fullmatch(r"r[0-9]+", valor):
+                    if nombre == "courierJoined" and campo == "courier":
+                        if valor in refuerzos_unidos:
+                            errores.append(f"linea {n}: {valor} se unio dos veces")
+                        refuerzos_unidos.add(valor)
+                    elif valor not in refuerzos_unidos:
+                        errores.append(f"linea {n}: {valor} aparece antes de courierJoined")
+                    elif valor in refuerzos_retirados:
+                        errores.append(f"linea {n}: {valor} aparece despues de courierRetired")
+                    elif nombre == "courierRetired" and campo == "courier":
+                        refuerzos_retirados.add(valor)
 
             if nombre == "orderRejected" and e.get("reason") not in MOTIVOS:
                 errores.append(f"linea {n}: motivo de rechazo invalido {e.get('reason')!r}")
@@ -126,7 +151,8 @@ def main(argv):
         return 1
 
     obligatorios = ["created", "delivered", "rejected", "pending", "reassigned",
-                    "breakdowns", "avgDeliveryMs", "maxDeliveryMs", "deliveredPerCourier"]
+                    "breakdowns", "avgDeliveryMs", "maxDeliveryMs", "deliveredPerCourier",
+                    "reinforcementsJoined", "reinforcementsRetired"]
     for campo in obligatorios:
         if campo not in resumen:
             errores.append(f"resumen: falta el campo {campo}")
@@ -152,6 +178,10 @@ def main(argv):
     if resumen["breakdowns"] != eventos["courierBreakdown"]:
         errores.append(f"resumen: breakdowns={resumen['breakdowns']} pero el log tiene "
                        f"{eventos['courierBreakdown']} lineas courierBreakdown")
+    if resumen["reinforcementsJoined"] != eventos["courierJoined"]:
+        errores.append("resumen: reinforcementsJoined no coincide con courierJoined")
+    if resumen["reinforcementsRetired"] != eventos["courierRetired"]:
+        errores.append("resumen: reinforcementsRetired no coincide con courierRetired")
 
     if resumen["pending"] != len(vivas):
         errores.append(f"resumen: pending={resumen['pending']} pero quedaron {len(vivas)} "

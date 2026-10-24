@@ -9578,7 +9578,7 @@
     }
   ],
   "fleet": {
-    "couriers": 8,
+    "couriers": 2,
     "bagCapacity": 3,
     "speedKmh": 30,
     "startNode": "n311"
@@ -9599,5 +9599,10 @@
   "simulation": {
     "durationS": 3600,
     "timeScale": 60
+  },
+  "reinforcements": {
+    "max": 4,
+    "threshold": 5,
+    "idleMs": 300000
   }
 }

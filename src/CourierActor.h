@@ -2,6 +2,7 @@
 
 #include <condition_variable>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <random>
 #include <vector>
@@ -13,11 +14,14 @@
 #include "Router.h"
 #include "SimContext.h"
 
+class Fleet;
+
 class CourierActor {
 public:
     CourierActor(CourierId id, const std::string& startNode, int bagCapacity,
                  const SimContext& ctx, double breakdownProbability = 0.0,
-                 std::uint32_t seed = 0);
+                 std::uint32_t seed = 0, bool reinforcement = false,
+                 std::int64_t idleMs = 0);
 
     CourierActor(const CourierActor&) = delete;
     CourierActor& operator=(const CourierActor&) = delete;
@@ -39,6 +43,7 @@ public:
     void setFleet(const std::vector<std::unique_ptr<CourierActor>>* fleet) {
         fleet_ = fleet;
     }
+    void setFleet(Fleet* fleet) { fleetManager_ = fleet; }
 
     bool forceBreakdown();
 
@@ -53,7 +58,7 @@ private:
     void setCourierState(CourierState s);
     void finish(OrderId orderId, bool wasDelivered);
 
-    bool maybeBreakDown(double fraction);
+    bool maybeBreakDown();
     bool breakDownAndHandOver();
     std::vector<OrderId> tryHandOverTo(CourierActor& target);
 
@@ -64,12 +69,16 @@ private:
     std::condition_variable cv_;
 
     const double breakdownProbability_;
+    const bool reinforcement_;
+    const std::int64_t idleMs_;
     std::mt19937 rng_;
     const std::vector<std::unique_ptr<CourierActor>>* fleet_ = nullptr;
+    Fleet* fleetManager_ = nullptr;
 
     bool hasRoomLocked() const;
 
     Courier state_;
     bool stopRequested_ = false;
+    bool retired_ = false;
     int reserved_ = 0;
 };
