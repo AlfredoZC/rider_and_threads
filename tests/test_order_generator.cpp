@@ -1,10 +1,3 @@
-// Pruebas de OrderGenerator.
-//
-// La prueba central es la de interrumpibilidad: con timeScale 1 y meanIntervalMs
-// 20000, el proximo pedido esta a unos 20 segundos REALES. Si el hilo durmiera, parar
-// tardaria eso. Como espera con plazo sobre una condition_variable, tiene que terminar
-// en milisegundos. Es la diferencia entre dormir y esperar, y lo que hace posible el
-// cierre en 5 segundos del §7.
 #include "OrderGenerator.h"
 
 #include <cassert>
@@ -24,18 +17,15 @@ double cpuMs() {
     return 1000.0 * static_cast<double>(std::clock()) / CLOCKS_PER_SEC;
 }
 
-}  // namespace
+}
 
 int main() {
     const Config base = loadConfig("config/equipetrol.json");
 
-    // --- genera ordenes y respeta el limite de la cola
     {
         Config cfg = base;
         cfg.maxPending = 5;
 
-        // timeScale alto para que el tiempo simulado corra rapido y la prueba sea breve:
-        // 20000 ms simulados son ~3.3 ms reales con escala 6000.
         const SimClock clock(6000.0);
         EventLog log("tests/bin/gen_burst.log", clock);
         OrderBook book(cfg.maxPending, clock, log);
@@ -53,16 +43,15 @@ int main() {
 
         assert(generator.generated() > 0);
         assert(s.created == generator.generated());
-        assert(s.pending <= 5);                    // nunca se paso de maxPending
+        assert(s.pending <= 5);
         assert(s.created == s.delivered + s.rejected + s.pending);
-        assert(s.rejected > 0);                    // con cola de 5 tiene que haber
+        assert(s.rejected > 0);
         std::cout << "  la cola nunca supero maxPending y el invariante cierra\n";
     }
 
-    // --- las rafagas existen: alguna llegada trae mas de una orden
     {
         Config cfg = base;
-        cfg.maxPending = 100000;                   // que no rechace, para contar bien
+        cfg.maxPending = 100000;
         const SimClock clock(20000.0);
         EventLog log("tests/bin/gen_rate.log", clock);
         OrderBook book(cfg.maxPending, clock, log);
@@ -81,10 +70,9 @@ int main() {
         assert(s.created == s.pending);
     }
 
-    // --- LA prueba: parar mientras espera un intervalo largo
     {
         Config cfg = base;
-        const SimClock clock(1.0);                 // tiempo real: el intervalo son ~20 s
+        const SimClock clock(1.0);
         EventLog log("tests/bin/gen_stop.log", clock);
         OrderBook book(cfg.maxPending, clock, log);
         OrderGenerator generator(cfg, clock, book);
@@ -97,17 +85,16 @@ int main() {
         const double cpuUsed = cpuMs() - cpuBefore;
         std::cout << "  esperando un intervalo de ~20 s consumio " << cpuUsed
                   << " ms de CPU en 300 ms\n";
-        assert(cpuUsed < 100.0);                   // no gira revisando el reloj
+        assert(cpuUsed < 100.0);
 
         const auto t0 = std::chrono::steady_clock::now();
         generator.requestStop();
         t.join();
         const std::int64_t stopMs = realElapsedMs(t0);
         std::cout << "  parar mientras esperaba tardo " << stopMs << " ms\n";
-        assert(stopMs < 500);                      // durmiendo habrian sido ~20000
+        assert(stopMs < 500);
     }
 
-    // --- arrancar y parar muchas veces: busca avisos perdidos, que cuelgan
     {
         Config cfg = base;
         const SimClock clock(1.0);

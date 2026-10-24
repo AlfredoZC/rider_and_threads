@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
-# Verifica que cada configuración inválida termina con código != 0, con un mensaje
-# en stderr y SIN imprimir la línea de inicio (es decir, sin simular).
-# Uso (desde la raíz del proyecto): tools/check_invalid_configs.sh build/delivery_sim
 BIN=${1:-build/delivery_sim}
 fails=0
 
-check() {   # check <descripción> <argumentos...>
+check() {
     local desc=$1; shift
     local out err code
     out=$("$BIN" "$@" 2>/tmp/check_err.txt); code=$?

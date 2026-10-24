@@ -9,8 +9,6 @@ OrderFactory::OrderFactory(const Config& cfg, std::uint32_t seed)
 Order OrderFactory::create(std::int64_t nowMs) {
     const RestaurantConfig& r = cfg_.restaurants[restaurantPick_(rng_)];
 
-    // El destino es cualquier nodo distinto del restaurante. Si existe camino o no lo
-    // decide después el dispatcher sobre el grafo; de ahí el rechazo "unreachable".
     std::string dropoff = cfg_.nodes[nodePick_(rng_)].id;
     while (dropoff == r.node) {
         dropoff = cfg_.nodes[nodePick_(rng_)].id;

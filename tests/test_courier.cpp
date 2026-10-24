@@ -1,4 +1,3 @@
-// Pruebas de Courier: constructor consistente, limite de la bolsa y estados.
 #include "Courier.h"
 
 #include <cassert>
@@ -7,7 +6,6 @@
 int main() {
     Courier c(1, "n311", 3);
 
-    // un objeto recien creado tiene que cumplir ya su invariante
     assert(c.id == 1);
     assert(c.state == CourierState::idle);
     assert(c.fromNode == "n311");
@@ -17,48 +15,42 @@ int main() {
     assert(c.delivered == 0);
     assert(c.bag.empty());
     assert(currentNode(c) == "n311");
-    assert(c.bag.capacity() >= 3);      // el reserve del constructor
+    assert(c.bag.capacity() >= 3);
 
-    // el limite de capacidad
     assert(hasRoom(c));
     c.bag.push_back(10);
     c.bag.push_back(11);
     assert(hasRoom(c));
     c.bag.push_back(12);
-    assert(!hasRoom(c));                // justo en el limite
+    assert(!hasRoom(c));
 
-    // estados
     assert(!isBusy(CourierState::idle));
     assert(!isBusy(CourierState::brokenDown));
     assert(isBusy(CourierState::toPickup));
     assert(isBusy(CourierState::atRestaurant));
     assert(isBusy(CourierState::toDropoff));
 
-    // los nombres que se escriben en el log
     assert(std::string(toString(CourierState::idle)) == "idle");
     assert(std::string(toString(CourierState::atRestaurant)) == "atRestaurant");
     assert(std::string(toString(CourierState::brokenDown)) == "brokenDown");
 
-    // posicion derivada del reloj: el courier no actualiza ningun avance
     c.fromNode = "n311";
     c.toNode = "n312";
     c.segmentStartMs = 1000;
     c.segmentEndMs = 3000;
-    assert(currentNode(c) == "n311");       // a mitad de tramo, el nodo del que salio
+    assert(currentNode(c) == "n311");
     assert(positionRatio(c, 1000) == 0.0);
     assert(positionRatio(c, 2000) == 0.5);
     assert(positionRatio(c, 3000) == 1.0);
-    assert(positionRatio(c, 500) == 0.0);    // antes de salir: acotado
-    assert(positionRatio(c, 9999) == 1.0);   // tarde: acotado, no 4.5
+    assert(positionRatio(c, 500) == 0.0);
+    assert(positionRatio(c, 9999) == 1.0);
 
-    // Al llegar, el actor deja fromNode == toNode y las dos marcas iguales: eso es
-    // lo que significa "quieto" y lo que hace que positionRatio devuelva 1.
     c.fromNode = "n312";
     c.toNode = "n312";
     c.segmentStartMs = 3000;
     c.segmentEndMs = 3000;
     assert(currentNode(c) == "n312");
-    assert(positionRatio(c, 0) == 1.0);      // tramo de duracion cero
+    assert(positionRatio(c, 0) == 1.0);
 
     std::cout << "  courier ok\n";
 }

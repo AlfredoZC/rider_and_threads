@@ -1,12 +1,3 @@
-// Pruebas de CourierActor: el ciclo de vida del hilo.
-//
-// Tres cosas que el brief exige y que aca se comprueban con numeros:
-//   1. un courier sin trabajo NO consume CPU (§4),
-//   2. todos los hilos terminan, ninguno queda abandonado (§7),
-//   3. terminan rapido: el §7 da 5 segundos para cerrar todo.
-//
-// La prueba del aviso perdido es la repeticion: un lost wakeup no falla, CUELGA. Si
-// esta prueba no termina, ese es el sintoma.
 #include "CourierActor.h"
 
 #include "Config.h"
@@ -26,17 +17,13 @@ std::int64_t realElapsedMs(std::chrono::steady_clock::time_point from) {
                std::chrono::steady_clock::now() - from).count();
 }
 
-// Tiempo de CPU consumido por el proceso entero, en milisegundos.
 double cpuMs() {
     return 1000.0 * static_cast<double>(std::clock()) / CLOCKS_PER_SEC;
 }
 
-}  // namespace
+}
 
 int main() {
-    // El actor necesita el contexto compartido para trabajar. Estas pruebas son sobre el
-    // ciclo de vida del hilo, asi que nunca le llega una orden: el contexto esta para que
-    // el objeto se pueda construir.
     const Config cfg = loadConfig("config/equipetrol.json");
     const CityGraph graph(cfg);
     const SimClock clock(60.0);
@@ -49,7 +36,6 @@ int main() {
     }
     const SimContext ctx{graph, clock, log, book, restaurants};
 
-    // --- estado inicial coherente, visto desde afuera
     {
         CourierActor actor(1, cfg.startNode, 3, ctx);
         const Courier view = actor.snapshot();
@@ -62,7 +48,6 @@ int main() {
         std::cout << "  snapshot() devuelve el estado inicial correcto\n";
     }
 
-    // --- 8 hilos esperando: no pueden consumir CPU (§4)
     {
         const int kCouriers = 8;
         std::vector<std::unique_ptr<CourierActor>> fleet;
@@ -80,18 +65,15 @@ int main() {
         std::this_thread::sleep_for(std::chrono::milliseconds(400));
         const double cpuUsed = cpuMs() - cpuBefore;
 
-        // 8 hilos girando 400 ms gastarian unos 3200 ms de CPU. Esperando, casi cero.
         std::cout << "  8 couriers ociosos 400 ms consumieron " << cpuUsed << " ms de CPU\n";
         assert(cpuUsed < 100.0);
 
-        // mientras esperan, el candado esta libre: snapshot() no se bloquea
         for (auto& actor : fleet) {
             const Courier view = actor->snapshot();
             assert(view.state == CourierState::idle);
         }
         std::cout << "  snapshot() funciona mientras los hilos esperan\n";
 
-        // --- terminan todos, y rapido (§7: 5 segundos para cerrar)
         const auto t0 = std::chrono::steady_clock::now();
         for (auto& actor : fleet) { actor->requestStop(); }
         for (std::thread& t : threads) { t.join(); }
@@ -100,42 +82,31 @@ int main() {
         assert(stopMs < 1000);
     }
 
-    // --- requestStop() antes de que el hilo arranque: el hilo no debe quedar colgado.
-    // Es el caso del aviso perdido visto al reves, y lo cubre el predicado de wait().
     {
         CourierActor actor(1, cfg.startNode, 3, ctx);
-        actor.requestStop();                       // la bandera ya esta en true
+        actor.requestStop();
         std::thread t(&CourierActor::run, &actor);
-        t.join();                                  // si colgara, la prueba no termina
+        t.join();
         std::cout << "  requestStop() antes de arrancar el hilo no lo deja colgado\n";
     }
 
-    // --- repeticion: el aviso perdido es una carrera, asi que hay que provocarla
-    // muchas veces con temporizaciones distintas
     {
         const int kRounds = 300;
         for (int i = 0; i < kRounds; ++i) {
             CourierActor actor(1, cfg.startNode, 3, ctx);
             std::thread t(&CourierActor::run, &actor);
             if (i % 3 == 0) {
-                std::this_thread::yield();         // deja que el hilo llegue al wait
+                std::this_thread::yield();
             }
             actor.requestStop();
-            actor.requestStop();                   // llamarla dos veces es inofensivo
+            actor.requestStop();
             t.join();
         }
         std::cout << "  " << kRounds << " ciclos arrancar/parar sin un solo cuelgue\n";
     }
 
-    // --- reserva en dos fases: el agujero que encontro el validador
-    //
-    // El dispatcher registraba la asignacion en el libro y despues le entregaba la orden
-    // al courier. En ese orden, entre un paso y el otro el courier puede llenarse, la
-    // entrega falla con orderAssigned ya escrito y la orden tiene que volver a la cola,
-    // cosa que el §6 no sabe representar. La reserva invierte el orden: primero se aparta
-    // el lugar, y recien despues se registra.
     {
-        CourierActor actor(1, cfg.startNode, 2, ctx);   // bolsa de dos
+        CourierActor actor(1, cfg.startNode, 2, ctx);
 
         Order a;
         a.id = 1;
@@ -144,31 +115,24 @@ int main() {
         Order c;
         c.id = 3;
 
-        // Dos reservas caben; la tercera no, aunque la bolsa siga vacia. Los lugares
-        // apartados cuentan como ocupados: si no, dos reservas simultaneas pasarian las
-        // dos la verificacion y la bolsa terminaria con una orden de mas.
         assert(actor.reserve(a));
         assert(actor.reserve(b));
         assert(!actor.reserve(c));
-        assert(actor.snapshot().bag.empty());        // reservar no mete nada en la bolsa
+        assert(actor.snapshot().bag.empty());
 
-        // Confirmar una la mete en la bolsa y libera su reserva.
         actor.commitReservation(a);
         assert(actor.snapshot().bag.size() == 1);
-        assert(!actor.reserve(c));                   // una confirmada + una reservada = 2
+        assert(!actor.reserve(c));
 
-        // Cancelar devuelve el lugar sin tocar la bolsa.
         actor.cancelReservation();
         assert(actor.snapshot().bag.size() == 1);
-        assert(actor.reserve(c));                    // ahora si entra
+        assert(actor.reserve(c));
         actor.commitReservation(c);
         assert(actor.snapshot().bag.size() == 2);
-        assert(!actor.reserve(b));                   // bolsa llena
+        assert(!actor.reserve(b));
         std::cout << "  reserve/commit/cancel respetan bagCapacity sin tocar la bolsa\n";
     }
 
-    // --- un courier al que ya le pidieron parar no acepta reservas: si las aceptara, el
-    // dispatcher registraria una asignacion que nadie va a repartir
     {
         CourierActor actor(1, cfg.startNode, 3, ctx);
         actor.requestStop();

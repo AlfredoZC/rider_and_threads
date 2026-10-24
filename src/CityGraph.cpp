@@ -3,14 +3,8 @@
 
 namespace {
 
-// M_PI no es estandar de C++: es una extension de POSIX. glibc la define en
-// <cmath>, MinGW no sin _USE_MATH_DEFINES. El brief pide C++17 a secas, asi que
-// el valor va explicito y el codigo compila en cualquier entorno.
 constexpr double kPi = 3.14159265358979323846;
 
-// Distancia sobre la superficie de la Tierra entre dos puntos en grados (haversine).
-// Hace falta porque el config tiene latitud y longitud, no metros, y sin metros no hay
-// ni camino más corto ni estimación de tiempo.
 double haversineMeters(double lat1, double lon1, double lat2, double lon2) {
     const double kEarthRadiusM = 6371008.8;
     const double toRad = kPi / 180.0;
@@ -23,10 +17,9 @@ double haversineMeters(double lat1, double lon1, double lat2, double lon2) {
     return 2.0 * kEarthRadiusM * std::asin(std::sqrt(a));
 }
 
-}  // namespace
+}
 
 CityGraph::CityGraph(const Config& cfg) {
-    // 1. Los nodos, en el orden del config: el índice de un nodo es su posición acá.
     nodes_.reserve(cfg.nodes.size());
     ids_.reserve(cfg.nodes.size());
     for (const NodeConfig& n : cfg.nodes) {
@@ -36,15 +29,13 @@ CityGraph::CityGraph(const Config& cfg) {
 
     adjacency_.resize(nodes_.size());
 
-    // 2. Cada calle se convierte en aristas dirigidas. El tiempo de viaje se precalcula
-    // porque speedKmh es igual para toda la flota y no cambia durante la simulación.
-    const double msPerMeter = 3600.0 / cfg.speedKmh;   // 30 km/h -> 120 ms por metro
+    const double msPerMeter = 3600.0 / cfg.speedKmh;
 
     for (const StreetConfig& s : cfg.streets) {
         const NodeIndex a = indexOf(s.from);
         const NodeIndex b = indexOf(s.to);
         if (a == kNoNode || b == kNoNode || a == b) {
-            continue;   // loadConfig ya lo garantiza; esto es solo para no construir basura
+            continue;
         }
 
         const double meters = haversineMeters(nodes_[a].lat, nodes_[a].lon,

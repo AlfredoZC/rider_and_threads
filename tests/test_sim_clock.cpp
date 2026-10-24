@@ -1,8 +1,3 @@
-// Pruebas de SimClock.
-//
-// Las pruebas de tiempo son delicadas: el sistema operativo puede demorar mas de lo
-// pedido en despertar un hilo, nunca menos. Por eso los margenes son generosos hacia
-// arriba y estrictos hacia abajo: si durmio MENOS de lo pedido, es un bug de verdad.
 #include "SimClock.h"
 
 #include <cassert>
@@ -18,40 +13,33 @@ std::int64_t realElapsedMs(std::chrono::steady_clock::time_point from) {
                std::chrono::steady_clock::now() - from).count();
 }
 
-}  // namespace
+}
 
 int main() {
-    // --- conversiones: no dependen de ninguna medicion, son exactas
-    // realDuration devuelve MICROsegundos
     const SimClock fast(60.0);
-    assert(fast.realDuration(60000).count() == 1000000);   // 60 s simulados = 1 s real
+    assert(fast.realDuration(60000).count() == 1000000);
     assert(fast.realDuration(600).count() == 10000);
     assert(fast.realDuration(0).count() == 0);
     assert(fast.timeScale() == 60.0);
 
     const SimClock same(1.0);
-    assert(same.realDuration(1500).count() == 1500000);    // escala 1: son lo mismo
+    assert(same.realDuration(1500).count() == 1500000);
 
-    const SimClock slow(0.5);                              // mas lento que el mundo real
+    const SimClock slow(0.5);
     assert(slow.realDuration(1000).count() == 2000000);
 
-    // redondeo, no truncamiento: 599000 us / 60 = 9983.33 -> 9983
     assert(fast.realDuration(599).count() == 9983);
 
-    // ninguna duracion simulada positiva puede dar cero: un wait_for de cero dentro de
-    // un bucle se convierte en un bucle que gira consumiendo CPU (§4).
     for (std::int64_t simMs = 1; simMs <= 100; ++simMs) {
         assert(fast.realDuration(simMs).count() > 0);
     }
     const SimClock veryFast(1000.0);
-    assert(veryFast.realDuration(1).count() > 0);          // 1 ms simulado = 1 us real
+    assert(veryFast.realDuration(1).count() > 0);
 
-    // --- el reloj arranca cerca de cero
     const SimClock clock(60.0);
     assert(clock.nowMs() >= 0);
-    assert(clock.nowMs() < 1000);          // menos de 1 s simulado = 16 ms reales
+    assert(clock.nowMs() < 1000);
 
-    // --- monotonia: la t del log nunca puede decrecer (§6)
     std::int64_t last = clock.nowMs();
     for (int i = 0; i < 200000; ++i) {
         const std::int64_t now = clock.nowMs();
@@ -59,7 +47,6 @@ int main() {
         last = now;
     }
 
-    // --- el tiempo simulado avanza timeScale veces mas rapido que el real
     {
         const SimClock c(60.0);
         const auto t0 = std::chrono::steady_clock::now();
@@ -70,24 +57,20 @@ int main() {
 
         const std::int64_t simulated = after - before;
         std::cout << "  " << realMs << " ms reales -> " << simulated << " ms simulados\n";
-        assert(simulated >= realMs * 55);        // no puede ir mas lento que la escala
-        assert(simulated <= realMs * 65);        // ni mas rapido
+        assert(simulated >= realMs * 55);
+        assert(simulated <= realMs * 65);
     }
 
-    // --- sleepSim duerme el tiempo real equivalente
     {
         const SimClock c(60.0);
         const auto t0 = std::chrono::steady_clock::now();
-        c.sleepSim(6000);                        // 6 s simulados = 100 ms reales
+        c.sleepSim(6000);
         const std::int64_t realMs = realElapsedMs(t0);
         std::cout << "  sleepSim(6000) con escala 60 durmio " << realMs << " ms reales\n";
-        assert(realMs >= 95);                    // nunca menos de lo pedido
-        assert(realMs < 600);                    // margen amplio: el SO puede demorarse
+        assert(realMs >= 95);
+        assert(realMs < 600);
     }
 
-    // --- varios hilos leyendo a la vez: el reloj es compartible sin candado.
-    // Cada hilo verifica su propia secuencia; si hubiera estado mutable compartido,
-    // ThreadSanitizer lo reportaria al correr este mismo test con -fsanitize=thread.
     {
         const SimClock c(60.0);
         std::vector<std::thread> threads;
@@ -97,7 +80,7 @@ int main() {
                 std::int64_t prev = c.nowMs();
                 for (int i = 0; i < 50000; ++i) {
                     const std::int64_t now = c.nowMs();
-                    if (now < prev) { return; }   // no monotono: deja ok[t] en 0
+                    if (now < prev) { return; }
                     prev = now;
                 }
                 ok[static_cast<std::size_t>(t)] = 1;

@@ -10,9 +10,6 @@ using nlohmann::json;
 
 namespace {
 
-// Cada helper recibe la ruta "lógica" de la propiedad (p. ej. "fleet.couriers")
-// para que el mensaje de error diga exactamente qué está mal.
-
 [[noreturn]] void fail(const std::string& where, const std::string& what) {
     throw ConfigError("'" + where + "': " + what);
 }
@@ -194,7 +191,6 @@ void parseSettings(const json& root, Config& cfg, const std::unordered_set<std::
     cfg.meanIntervalMs = getInteger(orders, "meanIntervalMs", "orders", 1);
     cfg.burstMax = getInt(orders, "burstMax", "orders", 1);
     cfg.maxPending = getInt(orders, "maxPending", "orders", 0);
-    // Cualquier entero es una semilla válida; se reduce a 32 bits para std::mt19937
     cfg.seed = static_cast<std::uint32_t>(getInteger(orders, "seed", "orders"));
 
     const json dispatch = field(root, "dispatch", "");
@@ -215,7 +211,7 @@ void parseSettings(const json& root, Config& cfg, const std::unordered_set<std::
     }
 }
 
-}  // namespace
+}
 
 Config loadConfig(const std::string& path) {
     std::ifstream in(path);
