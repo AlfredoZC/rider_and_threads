@@ -209,6 +209,16 @@ void parseSettings(const json& root, Config& cfg, const std::unordered_set<std::
     if (!(cfg.timeScale > 0.0)) {
         fail("simulation.timeScale", "debe ser mayor que 0");
     }
+    const auto it = root.find("reinforcements");
+    if (it != root.end()) {
+        const json& r = *it;
+        cfg.reinforcements.max =
+            getInt(r, "max", "reinforcements", 0);
+        cfg.reinforcements.threshold =
+            getInt(r, "threshold", "reinforcements", 1);
+        cfg.reinforcements.idleMs =
+            getInteger(r, "idleMs", "reinforcements", 1);
+    }
 }
 
 }

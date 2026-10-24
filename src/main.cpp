@@ -9,6 +9,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <opencv2/core.hpp>
@@ -20,6 +21,7 @@
 #include "CourierActor.h"
 #include "Dispatcher.h"
 #include "EventLog.h"
+#include "Fleet.h"
 #include "OrderBook.h"
 #include "OrderGenerator.h"
 #include "Restaurant.h"
@@ -155,37 +157,30 @@ void drawActiveDeliveries(cv::Mat& img, const PixelMap& px, const SimContext& ct
                           const std::vector<Courier>& views, std::int64_t nowMs) {
     const cv::Scalar violeta(200, 80, 200);
     for (const Courier& view : views) {
-        if (view.bag.empty()) {
-            continue;
+        for (const OrderId id : view.bag) {
+            const auto order = ctx.book.find(id);
+            if (!order.has_value() || isFinalState(order->state)) {
+                continue;
+            }
+            const auto dropoff = px.find(order->dropoffNode);
+            if (dropoff == px.end()) {
+                continue;
+            }
+            const cv::Point2f desde = courierPixel(view, px, nowMs);
+            const cv::Point destino(cvRound(dropoff->second.x), cvRound(dropoff->second.y));
+            cv::line(img, cv::Point(cvRound(desde.x), cvRound(desde.y)), destino, violeta, 1,
+                     cv::LINE_AA);
+            cv::circle(img, destino, 4, violeta, cv::FILLED, cv::LINE_AA);
+            cv::circle(img, destino, 4, cv::Scalar(0, 0, 0), 1, cv::LINE_AA);
         }
-        const auto order = ctx.book.find(view.bag.front());
-        if (!order.has_value()) {
-            continue;
-        }
-        const auto dropoff = px.find(order->dropoffNode);
-        if (dropoff == px.end()) {
-            continue;
-        }
-        const cv::Point2f desde = courierPixel(view, px, nowMs);
-        const cv::Point destino(cvRound(dropoff->second.x), cvRound(dropoff->second.y));
-        cv::line(img, cv::Point(cvRound(desde.x), cvRound(desde.y)), destino, violeta, 1,
-                 cv::LINE_AA);
-        cv::circle(img, destino, 4, violeta, cv::FILLED, cv::LINE_AA);
-        cv::circle(img, destino, 4, cv::Scalar(0, 0, 0), 1, cv::LINE_AA);
     }
 }
 
 void drawCouriers(cv::Mat& img, const PixelMap& px, const std::vector<Courier>& views,
                   std::int64_t nowMs) {
-    const std::size_t total = views.size();
-    for (std::size_t i = 0; i < total; ++i) {
-        const Courier& view = views[i];
+    for (const Courier& view : views) {
         const cv::Point2f pos = courierPixel(view, px, nowMs);
-
-        const double angle = 2.0 * 3.14159265358979323846 * static_cast<double>(i) /
-                             static_cast<double>(total == 0 ? 1 : total);
-        const cv::Point center(cvRound(pos.x + 9.0 * std::cos(angle)),
-                               cvRound(pos.y + 9.0 * std::sin(angle)));
+        const cv::Point center(cvRound(pos.x), cvRound(pos.y));
 
         cv::circle(img, center, 6, courierColor(view.state), cv::FILLED, cv::LINE_AA);
         cv::circle(img, center, 6, cv::Scalar(0, 0, 0), 1, cv::LINE_AA);
@@ -193,7 +188,8 @@ void drawCouriers(cv::Mat& img, const PixelMap& px, const std::vector<Courier>& 
 }
 
 void drawPanel(cv::Mat& img, const OrderStats& stats, std::int64_t nowMs,
-               const std::string& attribution) {
+               const std::string& attribution, std::int64_t joined,
+               std::int64_t retired) {
     const int x = 10;
     int y = 24;
     drawLabel(img,
@@ -209,6 +205,11 @@ void drawPanel(cv::Mat& img, const OrderStats& stats, std::int64_t nowMs,
                   std::to_string(stats.reassigned) + "  media " +
                   std::to_string(stats.avgDeliveryMs / 1000) + "s",
               cv::Point(x, y), 0.5);
+
+    y += 22;
+    drawLabel(img, "refuerzos: " + std::to_string(joined) + " entraron, " +
+                       std::to_string(retired) + " se retiraron",
+              cv::Point(x, y), 0.45);
 
     y += 26;
     const struct {
@@ -238,6 +239,9 @@ int main(int argc, char** argv) {
     if (!parseArguments(argc, argv, args)) {
         return 2;
     }
+
+    std::signal(SIGINT, onStopSignal);
+    std::signal(SIGTERM, onStopSignal);
 
     Config cfg;
     try {
@@ -296,21 +300,13 @@ int main(int argc, char** argv) {
 
     const SimContext ctx{graph, clock, *log, book, restaurants};
 
-    std::vector<std::unique_ptr<CourierActor>> fleet;
-    fleet.reserve(static_cast<std::size_t>(cfg.couriers));
+    Fleet fleet(cfg, ctx);
     for (int i = 0; i < cfg.couriers; ++i) {
-        fleet.push_back(std::make_unique<CourierActor>(
+        auto actor = std::make_unique<CourierActor>(
             static_cast<CourierId>(i) + 1, cfg.startNode, cfg.bagCapacity, ctx,
-            cfg.breakdownProbability, cfg.seed));
-    }
-    for (auto& actor : fleet) {
+            cfg.breakdownProbability, cfg.seed);
         actor->setFleet(&fleet);
-    }
-
-    std::vector<std::thread> threads;
-    threads.reserve(fleet.size());
-    for (auto& actor : fleet) {
-        threads.emplace_back(&CourierActor::run, actor.get());
+        fleet.addAndStart(std::move(actor));
     }
     Dispatcher dispatcher(cfg, ctx, fleet);
     std::thread dispatcherThread(&Dispatcher::run, &dispatcher);
@@ -322,26 +318,24 @@ int main(int argc, char** argv) {
     }
     std::cout << "Simulation has started..." << std::endl;
 
-    std::signal(SIGINT, onStopSignal);
-    std::signal(SIGTERM, onStopSignal);
-
     const std::int64_t durationMs = cfg.durationS * 1000;
 
     cv::Mat frame;
     std::vector<Courier> views;
-    views.reserve(fleet.size());
+    views.reserve(static_cast<std::size_t>(cfg.couriers));
     while (true) {
         (showGraph ? withGraph : image).copyTo(frame);
 
         const std::int64_t nowMs = clock.nowMs();
 
         views.clear();
-        for (const auto& actor : fleet) {
+        for (CourierActor* actor : fleet.activeSnapshot()) {
             views.push_back(actor->snapshot());
         }
         drawActiveDeliveries(frame, px, ctx, views, nowMs);
         drawCouriers(frame, px, views, nowMs);
-        drawPanel(frame, book.stats(), nowMs, cfg.attribution);
+        drawPanel(frame, book.stats(), nowMs, cfg.attribution,
+                  fleet.reinforcementsJoined(), fleet.reinforcementsRetired());
         if (args.noWindow) {
             std::this_thread::sleep_for(std::chrono::milliseconds(kFrameMs));
         } else {
@@ -365,12 +359,12 @@ int main(int argc, char** argv) {
         }
     }
 
+    generator.requestStop();
+    generatorThread.join();
+
     Event stopping;
     stopping.name = EventName::kSimulationStopping;
     log->write(stopping);
-
-    generator.requestStop();
-    generatorThread.join();
 
     dispatcher.requestStop();
     dispatcherThread.join();
@@ -379,18 +373,18 @@ int main(int argc, char** argv) {
         entry.second->stop();
     }
 
-    for (auto& actor : fleet) {
-        actor->requestStop();
-    }
-    for (std::thread& thread : threads) {
-        thread.join();
-    }
+    fleet.requestStopAll();
+    fleet.joinAll();
 
     book.markRemainingAsPending();
     const OrderStats stats = book.stats();
 
-    std::cout << buildSummary(stats, stats.breakdowns, fleet) << std::endl;
+    std::cout << buildSummary(stats, stats.breakdowns, fleet.allSnapshot(),
+                              fleet.reinforcementsJoined(),
+                              fleet.reinforcementsRetired()) << std::endl;
 
-    cv::destroyAllWindows();
+    if (!args.noWindow) {
+        cv::destroyAllWindows();
+    }
     return 0;
 }

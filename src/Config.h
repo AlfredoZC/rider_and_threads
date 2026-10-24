@@ -34,7 +34,11 @@ struct RestaurantConfig {
     std::int64_t prepMinMs = 0;
     std::int64_t prepMaxMs = 0;
 };
-
+struct ReinforcementConfig {
+    int max = 0;
+    int threshold = 0;
+    std::int64_t idleMs = 0;
+};
 struct Config {
     std::filesystem::path imagePath;
     std::string attribution;
@@ -61,6 +65,8 @@ struct Config {
 
     std::int64_t durationS = 0;
     double timeScale = 1.0;
+
+    ReinforcementConfig reinforcements;
 };
 
 class ConfigError : public std::runtime_error {

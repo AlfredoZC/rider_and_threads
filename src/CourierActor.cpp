@@ -1,13 +1,23 @@
 #include "CourierActor.h"
 
+#include "Fleet.h"
+
 #include <algorithm>
+#include <chrono>
+#include <cmath>
+
+namespace {
+constexpr std::int64_t kPickupServiceMs = 1000;
+}
 
 CourierActor::CourierActor(CourierId id, const std::string& startNode, int bagCapacity,
                            const SimContext& ctx, double breakdownProbability,
-                           std::uint32_t seed)
+                           std::uint32_t seed, bool reinforcement, std::int64_t idleMs)
     : id_(id),
       ctx_(ctx),
       breakdownProbability_(breakdownProbability),
+      reinforcement_(reinforcement),
+      idleMs_(idleMs),
       rng_(seed ^ (static_cast<std::uint32_t>(id) * 2654435761u)),
       state_(id, startNode, bagCapacity) {}
 
@@ -15,16 +25,55 @@ void CourierActor::run() {
     Router router(ctx_.graph);
 
     std::unique_lock<std::mutex> lock(mutex_);
+    std::chrono::steady_clock::time_point idleSince;
+    bool countingIdle = false;
     while (true) {
-        cv_.wait(lock, [this] { return stopRequested_ || !state_.bag.empty(); });
         if (stopRequested_) {
             break;
         }
+        if (state_.bag.empty()) {
+            if (!reinforcement_) {
+                cv_.wait(lock, [this] { return stopRequested_ || !state_.bag.empty(); });
+                continue;
+            }
+            if (!countingIdle) {
+                idleSince = std::chrono::steady_clock::now();
+                countingIdle = true;
+            }
+            const auto deadline = idleSince + ctx_.clock.realDuration(idleMs_);
+            cv_.wait_until(lock, deadline, [this] {
+                return stopRequested_ || !state_.bag.empty() || reserved_ > 0;
+            });
+            if (stopRequested_) {
+                break;
+            }
+            if (!state_.bag.empty()) {
+                countingIdle = false;
+                continue;
+            }
+            if (reserved_ > 0) {
+                cv_.wait(lock, [this] {
+                    return stopRequested_ || !state_.bag.empty() || reserved_ == 0;
+                });
+                continue;
+            }
+            if (std::chrono::steady_clock::now() >= deadline) {
+                retired_ = true;
+                lock.unlock();
+                if (fleetManager_ != nullptr) {
+                    fleetManager_->markRetired(id_);
+                }
+                return;
+            }
+            continue;
+        }
+
+        countingIdle = false;
 
         const OrderId orderId = state_.bag.front();
 
         lock.unlock();
-        if (!maybeBreakDown(0.5)) {
+        if (!maybeBreakDown()) {
             deliver(router, orderId);
         }
         lock.lock();
@@ -52,13 +101,7 @@ void CourierActor::deliver(Router& router, OrderId orderId) {
 
     setCourierState(CourierState::atRestaurant);
 
-    Event started;
-    started.name = EventName::kPickupStarted;
-    started.order = orderId;
-    started.courier = id_;
-    started.restaurant = order.restaurantId;
-    const std::int64_t arrivedMs = ctx_.log.write(started);
-
+    const std::int64_t arrivedMs = ctx_.clock.nowMs();
     const std::int64_t readyMs = order.createdMs + order.prepMs;
     if (readyMs > arrivedMs && !waitSim(readyMs - arrivedMs)) {
         return;
@@ -71,12 +114,25 @@ void CourierActor::deliver(Router& router, OrderId orderId) {
         return;
     }
 
+    Event started;
+    started.name = EventName::kPickupStarted;
+    started.order = orderId;
+    started.courier = id_;
+    started.restaurant = order.restaurantId;
+    ctx_.log.write(started);
+
+    if (!waitSim(kPickupServiceMs)) {
+        if (restaurant != nullptr) {
+            restaurant->release();
+        }
+        return;
+    }
     ctx_.book.pickedUp(orderId, id_);
     if (restaurant != nullptr) {
         restaurant->release();
     }
 
-    if (maybeBreakDown(0.5)) {
+    if (maybeBreakDown()) {
         return;
     }
 
@@ -144,7 +200,7 @@ bool CourierActor::waitSim(std::int64_t simMs) {
 bool CourierActor::offer(const Order& order) {
     {
         const std::lock_guard<std::mutex> guard(mutex_);
-        if (stopRequested_ || state_.state == CourierState::brokenDown ||
+        if (stopRequested_ || retired_ || state_.state == CourierState::brokenDown ||
             !hasRoomLocked()) {
             return false;
         }
@@ -161,10 +217,12 @@ bool CourierActor::hasRoomLocked() const {
 
 bool CourierActor::reserve(const Order&) {
     const std::lock_guard<std::mutex> guard(mutex_);
-    if (stopRequested_ || state_.state == CourierState::brokenDown || !hasRoomLocked()) {
+    if (stopRequested_ || retired_ || state_.state == CourierState::brokenDown ||
+        !hasRoomLocked()) {
         return false;
     }
     ++reserved_;
+    cv_.notify_one();
     return true;
 }
 
@@ -178,8 +236,12 @@ void CourierActor::commitReservation(const Order& order) {
 }
 
 void CourierActor::cancelReservation() {
-    const std::lock_guard<std::mutex> guard(mutex_);
-    --reserved_;
+    {
+        const std::lock_guard<std::mutex> guard(mutex_);
+        --reserved_;
+    }
+    cv_.notify_one();
+    ctx_.book.notifyCapacityChanged();
 }
 
 void CourierActor::setCourierState(CourierState s) {
@@ -188,19 +250,22 @@ void CourierActor::setCourierState(CourierState s) {
 }
 
 void CourierActor::finish(OrderId orderId, bool wasDelivered) {
-    const std::lock_guard<std::mutex> guard(mutex_);
-    state_.bag.erase(std::remove(state_.bag.begin(), state_.bag.end(), orderId),
-                     state_.bag.end());
-    if (wasDelivered) {
-        ++state_.delivered;
+    {
+        const std::lock_guard<std::mutex> guard(mutex_);
+        state_.bag.erase(std::remove(state_.bag.begin(), state_.bag.end(), orderId),
+                         state_.bag.end());
+        if (wasDelivered) {
+            ++state_.delivered;
+        }
+        if (state_.bag.empty()) {
+            state_.state = CourierState::idle;
+        }
     }
-    if (state_.bag.empty()) {
-        state_.state = CourierState::idle;
-    }
+    ctx_.book.notifyCapacityChanged();
 }
 
-bool CourierActor::maybeBreakDown(double fraction) {
-    const double probability = breakdownProbability_ * fraction;
+bool CourierActor::maybeBreakDown() {
+    const double probability = 1.0 - std::sqrt(1.0 - breakdownProbability_);
     if (probability <= 0.0) {
         return false;
     }
@@ -214,30 +279,34 @@ bool CourierActor::maybeBreakDown(double fraction) {
 bool CourierActor::forceBreakdown() { return breakDownAndHandOver(); }
 
 bool CourierActor::breakDownAndHandOver() {
-    if (fleet_ == nullptr) {
+    if (fleet_ == nullptr && fleetManager_ == nullptr) {
         return false;
     }
 
-    std::vector<OrderId> moved;
-    CourierId receiver = kNoCourier;
-    for (const auto& candidate : *fleet_) {
+    std::vector<CourierActor*> candidates;
+    if (fleetManager_ != nullptr) {
+        candidates = fleetManager_->activeSnapshot();
+    } else {
+        candidates.reserve(fleet_->size());
+        for (const auto& actor : *fleet_) {
+            candidates.push_back(actor.get());
+        }
+    }
+
+    CourierActor* recipient = nullptr;
+    for (CourierActor* candidate : candidates) {
         if (candidate->id() == id_) {
             continue;
         }
-        moved = tryHandOverTo(*candidate);
-        if (!moved.empty()) {
-            receiver = candidate->id();
+        if (!tryHandOverTo(*candidate).empty()) {
+            recipient = candidate;
             break;
         }
     }
-    if (receiver == kNoCourier) {
+    if (recipient == nullptr) {
         return false;
     }
-
-    ctx_.book.recordBreakdown(id_);
-    for (const OrderId orderId : moved) {
-        ctx_.book.handOver(orderId, id_, receiver);
-    }
+    recipient->cv_.notify_one();
     return true;
 }
 
@@ -250,7 +319,8 @@ std::vector<OrderId> CourierActor::tryHandOverTo(CourierActor& target) {
     if (reserved_ > 0) {
         return {};
     }
-    if (target.stopRequested_ || target.state_.state == CourierState::brokenDown) {
+    if (target.stopRequested_ || target.retired_ ||
+        target.state_.state == CourierState::brokenDown) {
         return {};
     }
     const std::size_t ocupados =
@@ -265,6 +335,9 @@ std::vector<OrderId> CourierActor::tryHandOverTo(CourierActor& target) {
     }
 
     std::vector<OrderId> moved = state_.bag;
+    if (!ctx_.book.handOverBatch(moved, id_, target.id_)) {
+        return {};
+    }
     for (const OrderId orderId : moved) {
         target.state_.bag.push_back(orderId);
     }

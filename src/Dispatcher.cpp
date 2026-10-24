@@ -10,12 +10,35 @@ constexpr std::chrono::milliseconds kIdleCheck{200};
 Dispatcher::Dispatcher(const Config& cfg, const SimContext& ctx,
                        const std::vector<std::unique_ptr<CourierActor>>& fleet)
     : ctx_(ctx),
-      fleet_(fleet),
+      legacyFleet_(&fleet),
       quoteTimeoutMs_(cfg.quoteTimeoutMs),
       acceptTimeoutMs_(cfg.acceptTimeoutMs),
       quote_(estimateDeliveryMs),
       router_(ctx.graph),
-      pool_(ctx.graph) {}
+      pool_(ctx.graph, static_cast<unsigned>(cfg.couriers) +
+                           static_cast<unsigned>(cfg.reinforcements.max)) {}
+
+Dispatcher::Dispatcher(const Config& cfg, const SimContext& ctx, Fleet& fleet)
+    : ctx_(ctx),
+      fleet_(&fleet),
+      quoteTimeoutMs_(cfg.quoteTimeoutMs),
+      acceptTimeoutMs_(cfg.acceptTimeoutMs),
+      quote_(estimateDeliveryMs),
+      router_(ctx.graph),
+      pool_(ctx.graph, static_cast<unsigned>(cfg.couriers) +
+                           static_cast<unsigned>(cfg.reinforcements.max)) {}
+
+std::vector<CourierActor*> Dispatcher::activeCouriers() const {
+    if (fleet_ != nullptr) {
+        return fleet_->activeSnapshot();
+    }
+    std::vector<CourierActor*> actors;
+    actors.reserve(legacyFleet_->size());
+    for (const auto& actor : *legacyFleet_) {
+        actors.push_back(actor.get());
+    }
+    return actors;
+}
 
 bool Dispatcher::destinoInalcanzable(const Order& order) {
     const NodeIndex pickup = ctx_.graph.indexOf(order.pickupNode);
@@ -27,16 +50,25 @@ bool Dispatcher::destinoInalcanzable(const Order& order) {
 }
 
 void Dispatcher::run() {
+    std::uint64_t observed = ctx_.book.workVersion();
     while (!stopped()) {
-        if (!ctx_.book.waitForUnassigned(kIdleCheck)) {
-            break;
-        }
         sweepLateQuotes();
-        for (const OrderId id : ctx_.book.unassignedIds()) {
+        const std::vector<OrderId> waiting = ctx_.book.unassignedIds();
+        if (fleet_ != nullptr) {
+            while (fleet_->maybeSpawn(waiting.size())) {}
+        }
+        for (const OrderId id : waiting) {
             if (stopped()) {
                 break;
             }
             dispatchOne(id);
+        }
+        if (fleet_ != nullptr) {
+            const std::size_t stillWaiting = ctx_.book.unassignedIds().size();
+            while (fleet_->maybeSpawn(stillWaiting)) {}
+        }
+        if (!ctx_.book.waitForChange(observed, kIdleCheck)) {
+            break;
         }
     }
 
@@ -68,13 +100,13 @@ void Dispatcher::dispatchOne(OrderId orderId) {
     }
 
     std::vector<Candidate> candidates;
-    for (std::size_t i = 0; i < fleet_.size(); ++i) {
-        const Courier view = fleet_[i]->snapshot();
+    for (CourierActor* actor : activeCouriers()) {
+        const Courier view = actor->snapshot();
         if (view.state == CourierState::brokenDown || !hasRoom(view)) {
             continue;
         }
         candidates.push_back(Candidate{
-            i, pool_.submit([this, view, order](Router& router) {
+            actor, pool_.submit([this, view, order](Router& router) {
                 return quote_(router, ctx_.graph, view, order);
             })});
     }
@@ -90,7 +122,7 @@ void Dispatcher::dispatchOne(OrderId orderId) {
     const auto deadline =
         std::chrono::steady_clock::now() + std::chrono::milliseconds(quoteTimeoutMs_);
 
-    std::size_t best = 0;
+    CourierActor* best = nullptr;
     std::int64_t bestMs = std::numeric_limits<std::int64_t>::max();
     bool found = false;
     std::int64_t lateNow = 0;
@@ -111,7 +143,7 @@ void Dispatcher::dispatchOne(OrderId orderId) {
         }
         if (value != kUnreachable && value < bestMs) {
             bestMs = value;
-            best = c.index;
+            best = c.actor;
             found = true;
         }
     }
@@ -124,7 +156,7 @@ void Dispatcher::dispatchOne(OrderId orderId) {
         return;
     }
 
-    CourierActor& elegido = *fleet_[best];
+    CourierActor& elegido = *best;
     if (!elegido.reserve(order)) {
         return;
     }

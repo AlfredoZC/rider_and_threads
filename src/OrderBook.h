@@ -40,12 +40,16 @@ public:
     bool pickedUp(OrderId id, CourierId courier);
     bool delivered(OrderId id, CourierId courier);
     bool waitForUnassigned(std::chrono::milliseconds timeout);
+    std::uint64_t workVersion() const;
+    bool waitForChange(std::uint64_t& observed, std::chrono::milliseconds timeout);
+    void notifyCapacityChanged();
     void stopWaiting();
     bool unassign(OrderId id, bool countAsReassigned);
 
     std::int64_t markRemainingAsPending();
 
     bool handOver(OrderId id, CourierId from, CourierId to);
+    bool handOverBatch(const std::vector<OrderId>& ids, CourierId from, CourierId to);
 
     void recordBreakdown(CourierId courier);
 
@@ -64,6 +68,7 @@ private:
 
     mutable std::mutex mutex_;
     std::condition_variable work_;
+    std::uint64_t workVersion_ = 0;
     bool stopWaiting_ = false;
     std::unordered_map<OrderId, Order> orders_;
     std::size_t pending_ = 0;
