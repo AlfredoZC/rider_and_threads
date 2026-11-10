@@ -12,12 +12,15 @@ constexpr std::int64_t kPickupServiceMs = 1000;
 
 CourierActor::CourierActor(CourierId id, const std::string& startNode, int bagCapacity,
                            const SimContext& ctx, double breakdownProbability,
-                           std::uint32_t seed, bool reinforcement, std::int64_t idleMs)
+                           std::uint32_t seed, bool reinforcement, std::int64_t idleMs,
+                           int breakAfterDeliveries, std::int64_t breakMs)
     : id_(id),
       ctx_(ctx),
       breakdownProbability_(breakdownProbability),
       reinforcement_(reinforcement),
       idleMs_(idleMs),
+      breakAfterDeliveries_(breakAfterDeliveries),
+      breakMs_(breakMs),
       rng_(seed ^ (static_cast<std::uint32_t>(id) * 2654435761u)),
       state_(id, startNode, bagCapacity) {}
 
@@ -31,9 +34,16 @@ void CourierActor::run() {
         if (stopRequested_) {
             break;
         }
+        if (breakDueLocked()) {
+            takeBreak(lock);
+            countingIdle = false;
+            continue;
+        }
         if (state_.bag.empty()) {
             if (!reinforcement_) {
-                cv_.wait(lock, [this] { return stopRequested_ || !state_.bag.empty(); });
+                cv_.wait(lock, [this] {
+                    return stopRequested_ || !state_.bag.empty() || breakDueLocked();
+                });
                 continue;
             }
             if (!countingIdle) {
@@ -42,13 +52,17 @@ void CourierActor::run() {
             }
             const auto deadline = idleSince + ctx_.clock.realDuration(idleMs_);
             cv_.wait_until(lock, deadline, [this] {
-                return stopRequested_ || !state_.bag.empty() || reserved_ > 0;
+                return stopRequested_ || !state_.bag.empty() || reserved_ > 0 ||
+                       breakDueLocked();
             });
             if (stopRequested_) {
                 break;
             }
             if (!state_.bag.empty()) {
                 countingIdle = false;
+                continue;
+            }
+            if (breakDueLocked()) {
                 continue;
             }
             if (reserved_ > 0) {
@@ -197,11 +211,48 @@ bool CourierActor::waitSim(std::int64_t simMs) {
                          [this] { return stopRequested_; });
 }
 
+bool CourierActor::drainingLocked() const {
+    return breakAfterDeliveries_ > 0 && sinceBreak_ >= breakAfterDeliveries_ &&
+           !state_.bag.empty();
+}
+
+bool CourierActor::breakDueLocked() const {
+    return breakAfterDeliveries_ > 0 && !stopRequested_ && !retired_ &&
+           state_.state == CourierState::idle && state_.bag.empty() && reserved_ == 0 &&
+           sinceBreak_ >= breakAfterDeliveries_;
+}
+
+void CourierActor::takeBreak(std::unique_lock<std::mutex>& lock) {
+    state_.state = CourierState::onBreak;
+    sinceBreak_ = 0;
+    ++state_.breaks;
+    Event started;
+    started.name = EventName::kCourierBreakStarted;
+    started.courier = id_;
+    ctx_.log.write(started);
+
+    const auto end = std::chrono::steady_clock::now() + ctx_.clock.realDuration(breakMs_);
+    cv_.wait_until(lock, end, [this] { return stopRequested_; });
+    if (stopRequested_) {
+        return;
+    }
+
+    state_.state = CourierState::idle;
+    Event ended;
+    ended.name = EventName::kCourierBreakEnded;
+    ended.courier = id_;
+    ctx_.log.write(ended);
+
+    lock.unlock();
+    ctx_.book.notifyCapacityChanged();
+    lock.lock();
+}
+
 bool CourierActor::offer(const Order& order) {
     {
         const std::lock_guard<std::mutex> guard(mutex_);
         if (stopRequested_ || retired_ || state_.state == CourierState::brokenDown ||
-            !hasRoomLocked()) {
+            state_.state == CourierState::onBreak || drainingLocked() || !hasRoomLocked()) {
             return false;
         }
         state_.bag.push_back(order.id);
@@ -218,7 +269,7 @@ bool CourierActor::hasRoomLocked() const {
 bool CourierActor::reserve(const Order&) {
     const std::lock_guard<std::mutex> guard(mutex_);
     if (stopRequested_ || retired_ || state_.state == CourierState::brokenDown ||
-        !hasRoomLocked()) {
+        state_.state == CourierState::onBreak || drainingLocked() || !hasRoomLocked()) {
         return false;
     }
     ++reserved_;
@@ -256,6 +307,7 @@ void CourierActor::finish(OrderId orderId, bool wasDelivered) {
                          state_.bag.end());
         if (wasDelivered) {
             ++state_.delivered;
+            ++sinceBreak_;
         }
         if (state_.bag.empty()) {
             state_.state = CourierState::idle;
@@ -320,7 +372,8 @@ std::vector<OrderId> CourierActor::tryHandOverTo(CourierActor& target) {
         return {};
     }
     if (target.stopRequested_ || target.retired_ ||
-        target.state_.state == CourierState::brokenDown) {
+        target.state_.state == CourierState::brokenDown ||
+        target.state_.state == CourierState::onBreak || target.drainingLocked()) {
         return {};
     }
     const std::size_t ocupados =

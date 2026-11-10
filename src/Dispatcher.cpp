@@ -1,10 +1,10 @@
 #include "Dispatcher.h"
 
 #include <algorithm>
-#include <limits>
 
 namespace {
-constexpr std::chrono::milliseconds kIdleCheck{200};
+// Sin pedidos esperando no hay plazo que vencer: el dispatcher duerme hasta que lo avisen.
+constexpr std::chrono::hours kNoDeadline{24};
 }
 
 Dispatcher::Dispatcher(const Config& cfg, const SimContext& ctx,
@@ -57,17 +57,26 @@ void Dispatcher::run() {
         if (fleet_ != nullptr) {
             while (fleet_->maybeSpawn(waiting.size())) {}
         }
+        bool retry = false;
         for (const OrderId id : waiting) {
             if (stopped()) {
                 break;
             }
-            dispatchOne(id);
+            if (dispatchOne(id)) {
+                retry = true;
+            }
         }
         if (fleet_ != nullptr) {
             const std::size_t stillWaiting = ctx_.book.unassignedIds().size();
-            while (fleet_->maybeSpawn(stillWaiting)) {}
+            bool spawned = false;
+            while (fleet_->maybeSpawn(stillWaiting)) {
+                spawned = true;
+            }
+            if (spawned) {
+                continue;
+            }
         }
-        if (!ctx_.book.waitForChange(observed, kIdleCheck)) {
+        if (!ctx_.book.waitForChange(observed, nextWakeUp(retry))) {
             break;
         }
     }
@@ -82,27 +91,48 @@ void Dispatcher::run() {
     pool_.stop();
 }
 
-void Dispatcher::dispatchOne(OrderId orderId) {
+std::chrono::milliseconds Dispatcher::nextWakeUp(bool retry) {
+    std::chrono::milliseconds wait = kNoDeadline;
+    const std::int64_t now = ctx_.clock.nowMs();
+    for (const OrderId id : ctx_.book.unassignedIds()) {
+        const auto order = ctx_.book.find(id);
+        if (!order.has_value()) {
+            continue;
+        }
+        const std::int64_t simLeft =
+            std::max<std::int64_t>(order->createdMs + acceptTimeoutMs_ + 1 - now, 0);
+        const auto real =
+            std::chrono::ceil<std::chrono::milliseconds>(ctx_.clock.realDuration(simLeft));
+        wait = std::min(wait, std::max(real, std::chrono::milliseconds(1)));
+    }
+    if (retry) {
+        wait = std::min(wait, std::chrono::milliseconds(quoteTimeoutMs_));
+    }
+    return wait;
+}
+
+bool Dispatcher::dispatchOne(OrderId orderId) {
     const auto maybe = ctx_.book.find(orderId);
     if (!maybe.has_value() || maybe->state != OrderState::created) {
-        return;
+        return false;
     }
     const Order order = *maybe;
 
     if (destinoInalcanzable(order)) {
         ctx_.book.reject(orderId, RejectReason::unreachable);
-        return;
+        return false;
     }
 
     if (ctx_.clock.nowMs() - order.createdMs > acceptTimeoutMs_) {
         ctx_.book.reject(orderId, RejectReason::noCourier);
-        return;
+        return false;
     }
 
     std::vector<Candidate> candidates;
     for (CourierActor* actor : activeCouriers()) {
         const Courier view = actor->snapshot();
-        if (view.state == CourierState::brokenDown || !hasRoom(view)) {
+        if (view.state == CourierState::brokenDown || view.state == CourierState::onBreak ||
+            !hasRoom(view)) {
             continue;
         }
         candidates.push_back(Candidate{
@@ -112,7 +142,7 @@ void Dispatcher::dispatchOne(OrderId orderId) {
     }
 
     if (candidates.empty()) {
-        return;
+        return false;
     }
     {
         const std::lock_guard<std::mutex> guard(mutex_);
@@ -122,10 +152,9 @@ void Dispatcher::dispatchOne(OrderId orderId) {
     const auto deadline =
         std::chrono::steady_clock::now() + std::chrono::milliseconds(quoteTimeoutMs_);
 
-    CourierActor* best = nullptr;
-    std::int64_t bestMs = std::numeric_limits<std::int64_t>::max();
-    bool found = false;
+    std::vector<std::pair<std::int64_t, CourierActor*>> ranked;
     std::int64_t lateNow = 0;
+    bool failed = false;
 
     for (Candidate& c : candidates) {
         if (c.estimate.wait_until(deadline) != std::future_status::ready) {
@@ -133,18 +162,13 @@ void Dispatcher::dispatchOne(OrderId orderId) {
             ++lateNow;
             continue;
         }
-        std::int64_t value = kUnreachable;
         try {
-            value = c.estimate.get();
-        } catch (const std::exception&) {
-            continue;
+            const std::int64_t value = c.estimate.get();
+            if (value != kUnreachable) {
+                ranked.emplace_back(value, c.actor);
+            }
         } catch (...) {
-            continue;
-        }
-        if (value != kUnreachable && value < bestMs) {
-            bestMs = value;
-            best = c.actor;
-            found = true;
+            failed = true;
         }
     }
     if (lateNow > 0) {
@@ -152,19 +176,25 @@ void Dispatcher::dispatchOne(OrderId orderId) {
         late_ += lateNow;
     }
 
-    if (!found) {
-        return;
-    }
+    std::sort(ranked.begin(), ranked.end(), [](const auto& a, const auto& b) {
+        return a.first != b.first ? a.first < b.first : a.second->id() < b.second->id();
+    });
 
-    CourierActor& elegido = *best;
-    if (!elegido.reserve(order)) {
-        return;
+    // Si un courier rechaza la reserva (por ejemplo, justo empezo a descansar), se prueba
+    // con el siguiente mejor.
+    for (const auto& entry : ranked) {
+        CourierActor& elegido = *entry.second;
+        if (!elegido.reserve(order)) {
+            continue;
+        }
+        if (!ctx_.book.assign(orderId, elegido.id())) {
+            elegido.cancelReservation();
+            return false;
+        }
+        elegido.commitReservation(order);
+        return false;
     }
-    if (!ctx_.book.assign(orderId, elegido.id())) {
-        elegido.cancelReservation();
-        return;
-    }
-    elegido.commitReservation(order);
+    return lateNow > 0 || failed;
 }
 
 void Dispatcher::sweepLateQuotes() {

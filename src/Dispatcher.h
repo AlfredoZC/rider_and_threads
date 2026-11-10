@@ -42,7 +42,9 @@ private:
         std::future<std::int64_t> estimate;
     };
 
-    void dispatchOne(OrderId orderId);
+    // Devuelve true si conviene reintentar pronto (estimaciones tardias o con error).
+    bool dispatchOne(OrderId orderId);
+    std::chrono::milliseconds nextWakeUp(bool retry);
     void sweepLateQuotes();
     bool stopped() const;
 

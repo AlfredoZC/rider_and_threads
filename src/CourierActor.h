@@ -21,7 +21,8 @@ public:
     CourierActor(CourierId id, const std::string& startNode, int bagCapacity,
                  const SimContext& ctx, double breakdownProbability = 0.0,
                  std::uint32_t seed = 0, bool reinforcement = false,
-                 std::int64_t idleMs = 0);
+                 std::int64_t idleMs = 0, int breakAfterDeliveries = 0,
+                 std::int64_t breakMs = 0);
 
     CourierActor(const CourierActor&) = delete;
     CourierActor& operator=(const CourierActor&) = delete;
@@ -71,11 +72,18 @@ private:
     const double breakdownProbability_;
     const bool reinforcement_;
     const std::int64_t idleMs_;
+    const int breakAfterDeliveries_;
+    const std::int64_t breakMs_;
     std::mt19937 rng_;
     const std::vector<std::unique_ptr<CourierActor>>* fleet_ = nullptr;
     Fleet* fleetManager_ = nullptr;
 
     bool hasRoomLocked() const;
+    bool breakDueLocked() const;
+    bool drainingLocked() const;
+    void takeBreak(std::unique_lock<std::mutex>& lock);
+
+    int sinceBreak_ = 0;
 
     Courier state_;
     bool stopRequested_ = false;

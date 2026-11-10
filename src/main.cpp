@@ -136,6 +136,7 @@ cv::Scalar courierColor(CourierState s) {
         case CourierState::atRestaurant: return cv::Scalar(0, 140, 255);
         case CourierState::toDropoff:    return cv::Scalar(60, 190, 60);
         case CourierState::brokenDown:   return cv::Scalar(40, 40, 220);
+        case CourierState::onBreak:      return cv::Scalar(220, 120, 200);
     }
     return cv::Scalar(255, 255, 255);
 }
@@ -219,7 +220,8 @@ void drawPanel(cv::Mat& img, const OrderStats& stats, std::int64_t nowMs,
                   {CourierState::toPickup, "al restaurante"},
                   {CourierState::atRestaurant, "esperando turno"},
                   {CourierState::toDropoff, "entregando"},
-                  {CourierState::brokenDown, "averiado"}};
+                  {CourierState::brokenDown, "averiado"},
+                  {CourierState::onBreak, "descansando"}};
     int lx = x;
     for (const auto& item : legend) {
         cv::circle(img, cv::Point(lx + 6, y - 4), 5, courierColor(item.state), cv::FILLED,
@@ -304,7 +306,8 @@ int main(int argc, char** argv) {
     for (int i = 0; i < cfg.couriers; ++i) {
         auto actor = std::make_unique<CourierActor>(
             static_cast<CourierId>(i) + 1, cfg.startNode, cfg.bagCapacity, ctx,
-            cfg.breakdownProbability, cfg.seed);
+            cfg.breakdownProbability, cfg.seed, false, 0, cfg.breakAfterDeliveries,
+            cfg.breakMs);
         actor->setFleet(&fleet);
         fleet.addAndStart(std::move(actor));
     }

@@ -15,6 +15,8 @@ CAMPOS = {
     "courierJoined": {"courier"},
     "courierRetired": {"courier"},
     "orderReassigned": {"order", "from", "to"},
+    "courierBreakStarted": {"courier"},
+    "courierBreakEnded": {"courier"},
     "simulationStopping": set(),
 }
 
@@ -51,6 +53,8 @@ def main(argv):
     refuerzos_unidos = set()
     refuerzos_retirados = set()
     simulacion_parando = False
+    en_descanso = set()
+    descansos = Counter()
 
     with open(ruta_log, encoding="utf-8") as f:
         for n, linea in enumerate(f, 1):
@@ -108,6 +112,26 @@ def main(argv):
                     elif nombre == "courierRetired" and campo == "courier":
                         refuerzos_retirados.add(valor)
 
+            if nombre == "courierBreakStarted":
+                c = e.get("courier")
+                if c in en_descanso:
+                    errores.append(f"linea {n}: {c} empieza un descanso estando en descanso")
+                en_descanso.add(c)
+                descansos[c] += 1
+            elif nombre == "courierBreakEnded":
+                c = e.get("courier")
+                if c not in en_descanso:
+                    errores.append(f"linea {n}: {c} termina un descanso que no empezo")
+                en_descanso.discard(c)
+            else:
+                if nombre == "orderReassigned":
+                    involucrado = e.get("to")
+                else:
+                    involucrado = e.get("courier")
+                if involucrado in en_descanso:
+                    errores.append(
+                        f"linea {n}: {nombre} de {involucrado} durante su descanso")
+
             if nombre == "orderRejected" and e.get("reason") not in MOTIVOS:
                 errores.append(f"linea {n}: motivo de rechazo invalido {e.get('reason')!r}")
 
@@ -152,7 +176,8 @@ def main(argv):
 
     obligatorios = ["created", "delivered", "rejected", "pending", "reassigned",
                     "breakdowns", "avgDeliveryMs", "maxDeliveryMs", "deliveredPerCourier",
-                    "reinforcementsJoined", "reinforcementsRetired"]
+                    "reinforcementsJoined", "reinforcementsRetired", "breaks",
+                    "breaksPerCourier"]
     for campo in obligatorios:
         if campo not in resumen:
             errores.append(f"resumen: falta el campo {campo}")
@@ -178,6 +203,18 @@ def main(argv):
     if resumen["breakdowns"] != eventos["courierBreakdown"]:
         errores.append(f"resumen: breakdowns={resumen['breakdowns']} pero el log tiene "
                        f"{eventos['courierBreakdown']} lineas courierBreakdown")
+    if resumen["breaks"] != eventos["courierBreakStarted"]:
+        errores.append(f"resumen: breaks={resumen['breaks']} pero el log tiene "
+                       f"{eventos['courierBreakStarted']} lineas courierBreakStarted")
+    por_descanso = resumen["breaksPerCourier"]
+    if set(por_descanso) != set(resumen["deliveredPerCourier"]):
+        errores.append("resumen: breaksPerCourier y deliveredPerCourier tienen claves distintas")
+    if sum(por_descanso.values()) != resumen["breaks"]:
+        errores.append("resumen: breaksPerCourier no suma breaks")
+    for courier, cuantos in descansos.items():
+        if por_descanso.get(courier, 0) != cuantos:
+            errores.append(f"resumen: {courier} descanso {cuantos} veces segun el log pero "
+                           f"{por_descanso.get(courier, 0)} segun el resumen")
     if resumen["reinforcementsJoined"] != eventos["courierJoined"]:
         errores.append("resumen: reinforcementsJoined no coincide con courierJoined")
     if resumen["reinforcementsRetired"] != eventos["courierRetired"]:

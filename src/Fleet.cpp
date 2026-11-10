@@ -10,6 +10,8 @@ Fleet::Fleet(const Config& cfg, const SimContext& ctx)
       maxReinforcements_(cfg.reinforcements.max),
       threshold_(cfg.reinforcements.threshold),
       idleMs_(cfg.reinforcements.idleMs),
+      breakAfterDeliveries_(cfg.breakAfterDeliveries),
+      breakMs_(cfg.breakMs),
       startNode_(cfg.startNode),
       bagCapacity_(cfg.bagCapacity),
       breakdownProbability_(cfg.breakdownProbability),
@@ -86,7 +88,8 @@ bool Fleet::maybeSpawn(std::size_t waiting) {
 
     const CourierId id = reinforcementId(nextReinforcement_);
     auto actor = std::make_unique<CourierActor>(
-        id, startNode_, bagCapacity_, *ctx_, breakdownProbability_, seed_, true, idleMs_);
+        id, startNode_, bagCapacity_, *ctx_, breakdownProbability_, seed_, true, idleMs_,
+        breakAfterDeliveries_, breakMs_);
     actor->setFleet(this);
     CourierActor* const raw = actor.get();
     std::promise<bool> startGate;

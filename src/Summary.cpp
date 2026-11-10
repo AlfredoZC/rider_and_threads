@@ -27,7 +27,22 @@ std::string buildSummary(const OrderStats& stats, std::int64_t breakdowns,
         first = false;
         out += "\"" + courierLabel(view.id) + "\":" + std::to_string(view.delivered);
     }
-    out += "}}";
+    out += "}";
+
+    std::int64_t breaks = 0;
+    std::string perCourier;
+    first = true;
+    for (const CourierActor* actor : fleet) {
+        const Courier view = actor->snapshot();
+        breaks += view.breaks;
+        if (!first) {
+            perCourier += ',';
+        }
+        first = false;
+        perCourier += "\"" + courierLabel(view.id) + "\":" + std::to_string(view.breaks);
+    }
+    out += ",\"breaks\":" + std::to_string(breaks);
+    out += ",\"breaksPerCourier\":{" + perCourier + "}}";
     return out;
 }
 

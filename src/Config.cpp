@@ -186,6 +186,15 @@ void parseSettings(const json& root, Config& cfg, const std::unordered_set<std::
     }
     cfg.startNode = getString(fleet, "startNode", "fleet");
     requireNode(nodeIds, cfg.startNode, "fleet.startNode");
+    const auto breakAfter = fleet.find("breakAfterDeliveries");
+    if (breakAfter != fleet.end()) {
+        cfg.breakAfterDeliveries = getInt(fleet, "breakAfterDeliveries", "fleet", 0);
+    }
+    if (cfg.breakAfterDeliveries > 0) {
+        cfg.breakMs = getInteger(fleet, "breakMs", "fleet", 1);
+    } else if (fleet.contains("breakMs")) {
+        cfg.breakMs = getInteger(fleet, "breakMs", "fleet");
+    }
 
     const json orders = field(root, "orders", "");
     cfg.meanIntervalMs = getInteger(orders, "meanIntervalMs", "orders", 1);

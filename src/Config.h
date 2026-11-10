@@ -52,6 +52,8 @@ struct Config {
     int bagCapacity = 0;
     double speedKmh = 0.0;
     std::string startNode;
+    int breakAfterDeliveries = 0;
+    std::int64_t breakMs = 0;
 
     std::int64_t meanIntervalMs = 0;
     int burstMax = 0;
