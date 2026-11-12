@@ -1,10 +1,15 @@
 #include "Dispatcher.h"
 
 #include <algorithm>
+#include <limits>
 
 namespace {
 // Sin pedidos esperando no hay plazo que vencer: el dispatcher duerme hasta que lo avisen.
 constexpr std::chrono::hours kNoDeadline{24};
+// Piso del plazo de reintento: con quoteTimeoutMs = 0 no se debe girar sin dormir.
+constexpr std::int64_t kMinRetryMs = 50;
+constexpr std::int64_t kMaxQuoteWaitMs =
+    std::chrono::duration_cast<std::chrono::milliseconds>(kNoDeadline).count();
 }
 
 Dispatcher::Dispatcher(const Config& cfg, const SimContext& ctx,
@@ -99,14 +104,20 @@ std::chrono::milliseconds Dispatcher::nextWakeUp(bool retry) {
         if (!order.has_value()) {
             continue;
         }
-        const std::int64_t simLeft =
-            std::max<std::int64_t>(order->createdMs + acceptTimeoutMs_ + 1 - now, 0);
+        // Suma saturada: un acceptTimeoutMs cerca de INT64_MAX no desborda.
+        const std::int64_t base = std::max<std::int64_t>(order->createdMs, 0);
+        const std::int64_t dueMs =
+            acceptTimeoutMs_ >= std::numeric_limits<std::int64_t>::max() - base - 1
+                ? std::numeric_limits<std::int64_t>::max()
+                : base + acceptTimeoutMs_ + 1;
+        const std::int64_t simLeft = std::max<std::int64_t>(dueMs - now, 0);
         const auto real =
             std::chrono::ceil<std::chrono::milliseconds>(ctx_.clock.realDuration(simLeft));
         wait = std::min(wait, std::max(real, std::chrono::milliseconds(1)));
     }
     if (retry) {
-        wait = std::min(wait, std::chrono::milliseconds(quoteTimeoutMs_));
+        wait = std::min(wait, std::chrono::milliseconds(std::clamp<std::int64_t>(
+                                  quoteTimeoutMs_, kMinRetryMs, kMaxQuoteWaitMs)));
     }
     return wait;
 }
@@ -150,7 +161,8 @@ bool Dispatcher::dispatchOne(OrderId orderId) {
     }
 
     const auto deadline =
-        std::chrono::steady_clock::now() + std::chrono::milliseconds(quoteTimeoutMs_);
+        std::chrono::steady_clock::now() +
+        std::chrono::milliseconds(std::clamp<std::int64_t>(quoteTimeoutMs_, 0, kMaxQuoteWaitMs));
 
     std::vector<std::pair<std::int64_t, CourierActor*>> ranked;
     std::int64_t lateNow = 0;

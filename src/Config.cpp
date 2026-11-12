@@ -193,7 +193,7 @@ void parseSettings(const json& root, Config& cfg, const std::unordered_set<std::
     if (cfg.breakAfterDeliveries > 0) {
         cfg.breakMs = getInteger(fleet, "breakMs", "fleet", 1);
     } else if (fleet.contains("breakMs")) {
-        cfg.breakMs = getInteger(fleet, "breakMs", "fleet");
+        cfg.breakMs = getInteger(fleet, "breakMs", "fleet", 0);
     }
 
     const json orders = field(root, "orders", "");

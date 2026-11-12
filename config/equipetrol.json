@@ -9578,10 +9578,12 @@
     }
   ],
   "fleet": {
-    "couriers": 2,
+    "couriers": 3,
     "bagCapacity": 3,
     "speedKmh": 30,
-    "startNode": "n311"
+    "startNode": "n311",
+    "breakAfterDeliveries": 2,
+    "breakMs": 600000
   },
   "orders": {
     "meanIntervalMs": 20000,

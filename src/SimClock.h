@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cassert>
 #include <chrono>
 #include <cmath>
@@ -19,9 +20,13 @@ public:
         return static_cast<std::int64_t>(real.count() * timeScale_);
     }
 
+    // Conversion recortada a +-1e15 us (~31 anios): cualquier valor valido de sim-ms da
+    // una duracion representable y sumable a steady_clock::now() sin desbordar.
     std::chrono::microseconds realDuration(std::int64_t simMs) const {
-        return std::chrono::microseconds(
-            std::llround(static_cast<double>(simMs) * 1000.0 / timeScale_));
+        constexpr double kLimitUs = 1e15;
+        const double us = std::clamp(static_cast<double>(simMs) * 1000.0 / timeScale_,
+                                     -kLimitUs, kLimitUs);
+        return std::chrono::microseconds(std::llround(us));
     }
 
     void sleepSim(std::int64_t simMs) const {

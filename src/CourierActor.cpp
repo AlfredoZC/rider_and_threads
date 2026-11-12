@@ -231,8 +231,20 @@ void CourierActor::takeBreak(std::unique_lock<std::mutex>& lock) {
     started.courier = id_;
     ctx_.log.write(started);
 
-    const auto end = std::chrono::steady_clock::now() + ctx_.clock.realDuration(breakMs_);
-    cv_.wait_until(lock, end, [this] { return stopRequested_; });
+    // Duerme sin CPU, en tramos acotados: un breakMs enorme no desborda el reloj y el
+    // descanso sigue siendo interrumpible por requestStop.
+    constexpr auto kMaxChunk = std::chrono::hours(1);
+    const auto begin = std::chrono::steady_clock::now();
+    const std::chrono::microseconds total = ctx_.clock.realDuration(breakMs_);
+    while (!stopRequested_) {
+        const auto left = total - std::chrono::duration_cast<std::chrono::microseconds>(
+                                      std::chrono::steady_clock::now() - begin);
+        if (left <= std::chrono::microseconds::zero()) {
+            break;
+        }
+        cv_.wait_for(lock, std::min<std::chrono::steady_clock::duration>(left, kMaxChunk),
+                     [this] { return stopRequested_; });
+    }
     if (stopRequested_) {
         return;
     }
