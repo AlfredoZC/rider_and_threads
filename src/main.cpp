@@ -24,6 +24,7 @@
 #include "Fleet.h"
 #include "OrderBook.h"
 #include "OrderGenerator.h"
+#include "KitchenScheduler.h"
 #include "Restaurant.h"
 #include "SimClock.h"
 #include "Summary.h"
@@ -136,6 +137,7 @@ cv::Scalar courierColor(CourierState s) {
         case CourierState::atRestaurant: return cv::Scalar(0, 140, 255);
         case CourierState::toDropoff:    return cv::Scalar(60, 190, 60);
         case CourierState::brokenDown:   return cv::Scalar(40, 40, 220);
+        case CourierState::onBreak:      return cv::Scalar(220, 120, 200);
     }
     return cv::Scalar(255, 255, 255);
 }
@@ -219,7 +221,8 @@ void drawPanel(cv::Mat& img, const OrderStats& stats, std::int64_t nowMs,
                   {CourierState::toPickup, "al restaurante"},
                   {CourierState::atRestaurant, "esperando turno"},
                   {CourierState::toDropoff, "entregando"},
-                  {CourierState::brokenDown, "averiado"}};
+                  {CourierState::brokenDown, "averiado"},
+                  {CourierState::onBreak, "descansando"}};
     int lx = x;
     for (const auto& item : legend) {
         cv::circle(img, cv::Point(lx + 6, y - 4), 5, courierColor(item.state), cv::FILLED,
@@ -294,9 +297,20 @@ int main(int argc, char** argv) {
     OrderBook book(cfg.maxPending, clock, *log);
     OrderGenerator generator(cfg, clock, book);
     Restaurants restaurants;
-    for (const RestaurantConfig& r : cfg.restaurants) {
-        restaurants.emplace(r.id, std::make_unique<Restaurant>(r.id, r.pickupSlots));
+    std::vector<Restaurant*> restaurantsInOrder;
+    for (std::size_t i = 0; i < cfg.restaurants.size(); ++i) {
+        const RestaurantConfig& r = cfg.restaurants[i];
+        KitchenSchedule schedule;
+        if (cfg.kitchen.enabled) {
+            schedule = KitchenSchedule{cfg.kitchen.pauseEveryMs, cfg.kitchen.pauseMs,
+                                       static_cast<std::int64_t>(i),
+                                       static_cast<std::int64_t>(cfg.restaurants.size())};
+        }
+        auto restaurant = std::make_unique<Restaurant>(r.id, r.pickupSlots, schedule, &clock);
+        restaurantsInOrder.push_back(restaurant.get());
+        restaurants.emplace(r.id, std::move(restaurant));
     }
+    KitchenScheduler kitchen(restaurantsInOrder, clock, *log);
 
     const SimContext ctx{graph, clock, *log, book, restaurants};
 
@@ -304,7 +318,8 @@ int main(int argc, char** argv) {
     for (int i = 0; i < cfg.couriers; ++i) {
         auto actor = std::make_unique<CourierActor>(
             static_cast<CourierId>(i) + 1, cfg.startNode, cfg.bagCapacity, ctx,
-            cfg.breakdownProbability, cfg.seed);
+            cfg.breakdownProbability, cfg.seed, false, 0, cfg.breakAfterDeliveries,
+            cfg.breakMs);
         actor->setFleet(&fleet);
         fleet.addAndStart(std::move(actor));
     }
@@ -316,6 +331,7 @@ int main(int argc, char** argv) {
     if (!args.noWindow) {
         cv::namedWindow(windowName, cv::WINDOW_AUTOSIZE);
     }
+    kitchen.start();
     std::cout << "Simulation has started..." << std::endl;
 
     const std::int64_t durationMs = cfg.durationS * 1000;
@@ -362,6 +378,9 @@ int main(int argc, char** argv) {
     generator.requestStop();
     generatorThread.join();
 
+    kitchen.requestStop();
+    kitchen.join();
+
     Event stopping;
     stopping.name = EventName::kSimulationStopping;
     log->write(stopping);
@@ -378,10 +397,17 @@ int main(int argc, char** argv) {
 
     book.markRemainingAsPending();
     const OrderStats stats = book.stats();
+    std::int64_t pausesTotal = 0;
+    std::int64_t delayedTotal = 0;
+    for (const Restaurant* r : restaurantsInOrder) {
+        pausesTotal += r->pauses();
+        delayedTotal += r->delayedByPause();
+    }
 
     std::cout << buildSummary(stats, stats.breakdowns, fleet.allSnapshot(),
                               fleet.reinforcementsJoined(),
-                              fleet.reinforcementsRetired()) << std::endl;
+                              fleet.reinforcementsRetired(), pausesTotal,
+                              delayedTotal) << std::endl;
 
     if (!args.noWindow) {
         cv::destroyAllWindows();

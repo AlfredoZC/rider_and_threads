@@ -186,12 +186,33 @@ void parseSettings(const json& root, Config& cfg, const std::unordered_set<std::
     }
     cfg.startNode = getString(fleet, "startNode", "fleet");
     requireNode(nodeIds, cfg.startNode, "fleet.startNode");
+    const auto breakAfter = fleet.find("breakAfterDeliveries");
+    if (breakAfter != fleet.end()) {
+        cfg.breakAfterDeliveries = getInt(fleet, "breakAfterDeliveries", "fleet", 0);
+    }
+    if (cfg.breakAfterDeliveries > 0) {
+        cfg.breakMs = getInteger(fleet, "breakMs", "fleet", 1);
+    } else if (fleet.contains("breakMs")) {
+        cfg.breakMs = getInteger(fleet, "breakMs", "fleet", 0);
+    }
 
     const json orders = field(root, "orders", "");
     cfg.meanIntervalMs = getInteger(orders, "meanIntervalMs", "orders", 1);
     cfg.burstMax = getInt(orders, "burstMax", "orders", 1);
     cfg.maxPending = getInt(orders, "maxPending", "orders", 0);
     cfg.seed = static_cast<std::uint32_t>(getInteger(orders, "seed", "orders"));
+
+    {
+        if (orders.find("urgentProbability") != orders.end()) {
+            cfg.urgentProbability = getNumber(orders, "urgentProbability", "orders");
+            if (!(cfg.urgentProbability >= 0.0 && cfg.urgentProbability <= 1.0)) {
+                fail("orders.urgentProbability", "debe estar entre 0 y 1");
+            }
+        }
+        if (orders.find("agingMs") != orders.end()) {
+            cfg.agingMs = getInteger(orders, "agingMs", "orders", 0);
+        }
+    }
 
     const json dispatch = field(root, "dispatch", "");
     cfg.quoteTimeoutMs = getInteger(dispatch, "quoteTimeoutMs", "dispatch", 0);
@@ -218,6 +239,18 @@ void parseSettings(const json& root, Config& cfg, const std::unordered_set<std::
             getInt(r, "threshold", "reinforcements", 1);
         cfg.reinforcements.idleMs =
             getInteger(r, "idleMs", "reinforcements", 1);
+    }
+    const auto kitchen = root.find("kitchen");
+    if (kitchen != root.end()) {
+        if (!kitchen->is_object()) {
+            fail("kitchen", "debe ser un objeto");
+        }
+        cfg.kitchen.pauseEveryMs = getInteger(*kitchen, "pauseEveryMs", "kitchen", 1);
+        cfg.kitchen.pauseMs = getInteger(*kitchen, "pauseMs", "kitchen", 0);
+        if (cfg.kitchen.pauseMs >= cfg.kitchen.pauseEveryMs) {
+            fail("kitchen.pauseMs", "debe ser menor que pauseEveryMs");
+        }
+        cfg.kitchen.enabled = true;
     }
 }
 

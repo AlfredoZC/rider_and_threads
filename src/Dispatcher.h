@@ -6,6 +6,8 @@
 #include <future>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <unordered_set>
 #include <vector>
 
 #include "Config.h"
@@ -42,7 +44,9 @@ private:
         std::future<std::int64_t> estimate;
     };
 
-    void dispatchOne(OrderId orderId);
+    enum class DispatchResult { assigned, rejected, noRoom, retryLater, unquotable };
+    DispatchResult dispatchOne(const Order& order);
+    void spawnIfNeeded(std::size_t waiting);
     void sweepLateQuotes();
     bool stopped() const;
 
@@ -54,6 +58,7 @@ private:
     Fleet* fleet_ = nullptr;
     const std::int64_t quoteTimeoutMs_;
     const std::int64_t acceptTimeoutMs_;
+    const std::int64_t agingMs_;
     QuoteFn quote_;
 
     Router router_;
