@@ -16,6 +16,9 @@ std::string buildSummary(const OrderStats& stats, std::int64_t breakdowns,
     out += ",\"maxDeliveryMs\":" + std::to_string(stats.maxDeliveryMs);
     out += ",\"reinforcementsJoined\":" + std::to_string(reinforcementsJoined);
     out += ",\"reinforcementsRetired\":" + std::to_string(reinforcementsRetired);
+    out += ",\"urgentCreated\":" + std::to_string(stats.urgentCreated);
+    out += ",\"urgentDelivered\":" + std::to_string(stats.urgentDelivered);
+    out += ",\"avgUrgentDeliveryMs\":" + std::to_string(stats.avgUrgentDeliveryMs);
 
     out += ",\"deliveredPerCourier\":{";
     bool first = true;

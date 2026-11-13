@@ -69,6 +69,9 @@ struct Config {
     double timeScale = 1.0;
 
     ReinforcementConfig reinforcements;
+
+    double urgentProbability = 0.0;
+    std::int64_t agingMs = 0;
 };
 
 class ConfigError : public std::runtime_error {

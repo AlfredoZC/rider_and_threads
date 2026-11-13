@@ -9589,7 +9589,9 @@
     "meanIntervalMs": 20000,
     "burstMax": 12,
     "maxPending": 50,
-    "seed": 42
+    "seed": 42,
+    "urgentProbability": 0.3,
+    "agingMs": 300000
   },
   "dispatch": {
     "quoteTimeoutMs": 200,

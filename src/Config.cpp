@@ -202,6 +202,18 @@ void parseSettings(const json& root, Config& cfg, const std::unordered_set<std::
     cfg.maxPending = getInt(orders, "maxPending", "orders", 0);
     cfg.seed = static_cast<std::uint32_t>(getInteger(orders, "seed", "orders"));
 
+    {
+        if (orders.find("urgentProbability") != orders.end()) {
+            cfg.urgentProbability = getNumber(orders, "urgentProbability", "orders");
+            if (!(cfg.urgentProbability >= 0.0 && cfg.urgentProbability <= 1.0)) {
+                fail("orders.urgentProbability", "debe estar entre 0 y 1");
+            }
+        }
+        if (orders.find("agingMs") != orders.end()) {
+            cfg.agingMs = getInteger(orders, "agingMs", "orders", 0);
+        }
+    }
+
     const json dispatch = field(root, "dispatch", "");
     cfg.quoteTimeoutMs = getInteger(dispatch, "quoteTimeoutMs", "dispatch", 0);
     cfg.acceptTimeoutMs = getInteger(dispatch, "acceptTimeoutMs", "dispatch", 0);

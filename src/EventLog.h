@@ -33,6 +33,7 @@ struct Event {
   std::string to;
 
   std::string reason;
+  int urgent = -1;
 };
 
 class EventLog {

@@ -80,6 +80,9 @@ std::int64_t EventLog::write(const Event &event) {
   appendText(tail, "from", event.from);
   appendText(tail, "to", event.to);
   appendText(tail, "reason", event.reason);
+  if (event.urgent >= 0) {
+    tail += event.urgent != 0 ? ",\"urgent\":true" : ",\"urgent\":false";
+  }
   tail += "}\n";
 
   const std::lock_guard<std::mutex> guard(mutex_);

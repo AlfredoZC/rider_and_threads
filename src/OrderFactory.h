@@ -17,6 +17,7 @@ public:
 private:
     const Config& cfg_;
     std::mt19937 rng_;
+    std::mt19937 urgentRng_;
     OrderId nextId_ = 1;
     std::uniform_int_distribution<std::size_t> restaurantPick_;
     std::uniform_int_distribution<std::size_t> nodePick_;

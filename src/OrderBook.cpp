@@ -42,8 +42,12 @@ bool OrderBook::admit(Order order) {
 
     event.name = EventName::kOrderCreated;
     event.restaurant = order.restaurantId;
+    event.urgent = order.urgent ? 1 : 0;
     order.createdMs = log_.write(event);
     ++stats_.created;
+    if (order.urgent) {
+        ++stats_.urgentCreated;
+    }
 
     if (pending_ >= maxPending_) {
         order.state = OrderState::rejected;
@@ -126,6 +130,114 @@ bool OrderBook::waitForChange(std::uint64_t& observed,
     return !stopWaiting_;
 }
 
+bool OrderBook::waitForChange(std::uint64_t& observed,
+                              std::chrono::steady_clock::time_point deadline) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    work_.wait_until(lock, deadline, [this, &observed] {
+        return stopWaiting_ || workVersion_ != observed;
+    });
+    observed = workVersion_;
+    return !stopWaiting_;
+}
+
+namespace {
+bool isUrgentNow(const Order& o, std::int64_t nowMs, std::int64_t agingMs) {
+    return o.urgent || (agingMs > 0 && nowMs - o.createdMs >= agingMs);
+}
+}
+
+std::optional<Order> OrderBook::pickNextUnassigned(
+    std::int64_t agingMs, const std::unordered_set<OrderId>& skip) const {
+    const std::lock_guard<std::mutex> guard(mutex_);
+    const std::int64_t now = clock_.nowMs();
+    const Order* best = nullptr;
+    bool bestClass0 = false;
+    for (const auto& entry : orders_) {
+        const Order& o = entry.second;
+        if (o.state != OrderState::created || skip.count(o.id) != 0) {
+            continue;
+        }
+        const bool class0 = isUrgentNow(o, now, agingMs);
+        bool better = false;
+        if (best == nullptr) {
+            better = true;
+        } else if (class0 != bestClass0) {
+            better = class0;
+        } else if (o.createdMs != best->createdMs) {
+            better = o.createdMs < best->createdMs;
+        } else {
+            better = o.id < best->id;
+        }
+        if (better) {
+            best = &o;
+            bestClass0 = class0;
+        }
+    }
+    if (best == nullptr) {
+        return std::nullopt;
+    }
+    return *best;
+}
+
+std::int64_t OrderBook::rejectExpired(std::int64_t acceptTimeoutMs) {
+    const std::lock_guard<std::mutex> guard(mutex_);
+    const std::int64_t now = clock_.nowMs();
+    std::int64_t rejected = 0;
+    for (auto& entry : orders_) {
+        Order& o = entry.second;
+        if (o.state != OrderState::created || now - o.createdMs <= acceptTimeoutMs) {
+            continue;
+        }
+        if (!setState(o, OrderState::rejected)) {
+            continue;
+        }
+        o.rejectReason = RejectReason::noCourier;
+        ++stats_.rejected;
+        ++rejected;
+
+        Event event;
+        event.name = EventName::kOrderRejected;
+        event.order = o.id;
+        event.reason = toString(RejectReason::noCourier);
+        log_.write(event);
+    }
+    return rejected;
+}
+
+std::optional<std::int64_t> OrderBook::nextDeadlineSimMs(std::int64_t acceptTimeoutMs,
+                                                         std::int64_t agingMs) const {
+    const std::lock_guard<std::mutex> guard(mutex_);
+    const std::int64_t now = clock_.nowMs();
+    std::optional<std::int64_t> best;
+    const auto consider = [&best](std::int64_t t) {
+        if (!best.has_value() || t < *best) {
+            best = t;
+        }
+    };
+    for (const auto& entry : orders_) {
+        const Order& o = entry.second;
+        if (o.state != OrderState::created) {
+            continue;
+        }
+        consider(saturatingAddMs(saturatingAddMs(o.createdMs, acceptTimeoutMs), 1));
+        if (agingMs > 0 && !o.urgent && now - o.createdMs < agingMs) {
+            consider(saturatingAddMs(o.createdMs, agingMs));
+        }
+    }
+    return best;
+}
+
+std::size_t OrderBook::waitingCount() const {
+    const std::lock_guard<std::mutex> guard(mutex_);
+    std::size_t n = 0;
+    for (const auto& entry : orders_) {
+        if (entry.second.state == OrderState::created) {
+            ++n;
+        }
+    }
+    return n;
+}
+
 void OrderBook::notifyCapacityChanged() {
     {
         const std::lock_guard<std::mutex> guard(mutex_);
@@ -136,6 +248,10 @@ void OrderBook::notifyCapacityChanged() {
 
 bool OrderBook::assign(OrderId id, CourierId courier) {
     const std::lock_guard<std::mutex> guard(mutex_);
+    return assignLocked(id, courier);
+}
+
+bool OrderBook::assignLocked(OrderId id, CourierId courier) {
     const auto it = orders_.find(id);
     if (it == orders_.end()) {
         return false;
@@ -151,6 +267,31 @@ bool OrderBook::assign(OrderId id, CourierId courier) {
     event.courier = courier;
     it->second.assignedMs = log_.write(event);
     return true;
+}
+
+OrderBook::AssignResult OrderBook::assignUnlessExpired(OrderId id, CourierId courier,
+                                                       std::int64_t acceptTimeoutMs) {
+    const std::lock_guard<std::mutex> guard(mutex_);
+    const auto it = orders_.find(id);
+    if (it == orders_.end()) {
+        return AssignResult::failed;
+    }
+    Order& o = it->second;
+    if (o.state == OrderState::created && clock_.nowMs() - o.createdMs > acceptTimeoutMs) {
+        if (!setState(o, OrderState::rejected)) {
+            return AssignResult::failed;
+        }
+        o.rejectReason = RejectReason::noCourier;
+        ++stats_.rejected;
+
+        Event event;
+        event.name = EventName::kOrderRejected;
+        event.order = o.id;
+        event.reason = toString(RejectReason::noCourier);
+        log_.write(event);
+        return AssignResult::expired;
+    }
+    return assignLocked(id, courier) ? AssignResult::assigned : AssignResult::failed;
 }
 
 bool OrderBook::pickedUp(OrderId id, CourierId courier) {
@@ -192,6 +333,10 @@ bool OrderBook::delivered(OrderId id, CourierId courier) {
     const std::int64_t total = deliveryMs(it->second);
     deliverySumMs_ += total;
     stats_.maxDeliveryMs = std::max(stats_.maxDeliveryMs, total);
+    if (it->second.urgent) {
+        ++stats_.urgentDelivered;
+        urgentDeliverySumMs_ += total;
+    }
     return true;
 }
 
@@ -323,5 +468,7 @@ OrderStats OrderBook::stats() const {
     copy.pending = static_cast<std::int64_t>(pending_) + markedPending_;
     copy.avgDeliveryMs =
         stats_.delivered > 0 ? deliverySumMs_ / stats_.delivered : 0;
+    copy.avgUrgentDeliveryMs =
+        stats_.urgentDelivered > 0 ? urgentDeliverySumMs_ / stats_.urgentDelivered : 0;
     return copy;
 }

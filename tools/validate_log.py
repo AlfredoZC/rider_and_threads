@@ -5,7 +5,7 @@ import sys
 from collections import Counter, defaultdict
 
 CAMPOS = {
-    "orderCreated": {"order", "restaurant"},
+    "orderCreated": {"order", "restaurant", "urgent"},
     "orderAssigned": {"order", "courier"},
     "pickupStarted": {"order", "courier", "restaurant"},
     "orderPickedUp": {"order", "courier", "restaurant"},
@@ -55,6 +55,10 @@ def main(argv):
     simulacion_parando = False
     en_descanso = set()
     descansos = Counter()
+    urgentes = set()
+    creada_t = {}
+    urgentes_entregados = 0
+    suma_urgentes_ms = 0
 
     with open(ruta_log, encoding="utf-8") as f:
         for n, linea in enumerate(f, 1):
@@ -67,8 +71,12 @@ def main(argv):
                 errores.append(f"linea {n}: no es JSON valido ({exc})")
                 continue
 
+            if not isinstance(e, dict):
+                errores.append(f"linea {n}: la linea no es un objeto JSON")
+                continue
+
             nombre = e.get("event")
-            if nombre not in CAMPOS:
+            if not isinstance(nombre, str) or nombre not in CAMPOS:
                 errores.append(f"linea {n}: evento desconocido {nombre!r}")
                 continue
             eventos[nombre] += 1
@@ -78,16 +86,23 @@ def main(argv):
             if nombre == "simulationStopping":
                 simulacion_parando = True
 
-            if not isinstance(e.get("t"), int):
+            t_valida = isinstance(e.get("t"), int) and not isinstance(e.get("t"), bool)
+            if not t_valida:
                 errores.append(f"linea {n}: falta t o no es entero")
             extra = set(e) - {"t", "event"} - CAMPOS[nombre]
             if extra:
                 errores.append(f"linea {n}: {nombre} lleva campos de mas: {sorted(extra)}")
 
+            tipos_validos = t_valida
             for campo in ("order", "courier"):
                 if campo in e and not isinstance(e[campo], str):
                     errores.append(
                         f"linea {n}: {campo} tiene que ser cadena, es {type(e[campo]).__name__}")
+                    tipos_validos = False
+            if not tipos_validos:
+                # sin t entero o con ids mal tipados no se pueden aplicar las reglas
+                # de estado/tiempo: queda reportado y se sigue con la linea siguiente
+                continue
 
             if nombre == "orderReassigned":
                 for campo in ("from", "to"):
@@ -128,12 +143,23 @@ def main(argv):
                     involucrado = e.get("to")
                 else:
                     involucrado = e.get("courier")
-                if involucrado in en_descanso:
+                if isinstance(involucrado, str) and involucrado in en_descanso:
                     errores.append(
                         f"linea {n}: {nombre} de {involucrado} durante su descanso")
 
             if nombre == "orderRejected" and e.get("reason") not in MOTIVOS:
                 errores.append(f"linea {n}: motivo de rechazo invalido {e.get('reason')!r}")
+
+            if nombre == "orderCreated":
+                if not isinstance(e.get("urgent"), bool):
+                    errores.append(f"linea {n}: orderCreated necesita urgent booleano")
+                elif e["urgent"]:
+                    urgentes.add(e.get("order"))
+                if isinstance(e.get("t"), int):
+                    creada_t[e.get("order")] = e["t"]
+            if nombre == "orderDelivered" and e.get("order") in urgentes:
+                urgentes_entregados += 1
+                suma_urgentes_ms += e["t"] - creada_t.get(e.get("order"), e["t"])
 
             orden = e.get("order")
             if orden is None:
@@ -161,7 +187,7 @@ def main(argv):
             if destino in FINALES:
                 vivas.discard(orden)
             if nombre == "orderDelivered":
-                entregas[e["courier"]] += 1
+                entregas[e.get("courier")] += 1
 
     with open(ruta_salida, encoding="utf-8") as f:
         lineas = [l.strip() for l in f if l.strip()]
@@ -172,6 +198,10 @@ def main(argv):
         resumen = json.loads(lineas[-1])
     except json.JSONDecodeError as exc:
         print(f"ERROR: la ultima linea de stdout no es JSON ({exc}): {lineas[-1][:120]}")
+        return 1
+
+    if not isinstance(resumen, dict):
+        print("ERROR: la ultima linea de stdout no es un objeto JSON")
         return 1
 
     obligatorios = ["created", "delivered", "rejected", "pending", "reassigned",
@@ -223,6 +253,13 @@ def main(argv):
     if resumen["pending"] != len(vivas):
         errores.append(f"resumen: pending={resumen['pending']} pero quedaron {len(vivas)} "
                        f"ordenes sin estado final en el log")
+
+    prom_urg = suma_urgentes_ms // urgentes_entregados if urgentes_entregados else 0
+    for clave, esperado in (("urgentCreated", len(urgentes)),
+                            ("urgentDelivered", urgentes_entregados),
+                            ("avgUrgentDeliveryMs", prom_urg)):
+        if resumen.get(clave) != esperado:
+            errores.append(f"resumen: {clave}={resumen.get(clave)} pero el log da {esperado}")
 
     por_courier = resumen["deliveredPerCourier"]
     if sum(por_courier.values()) != resumen["delivered"]:
