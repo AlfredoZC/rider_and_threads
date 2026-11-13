@@ -68,7 +68,11 @@ EventLog::EventLog(const std::string &path, const SimClock &clock)
   }
 }
 
-std::int64_t EventLog::write(const Event &event) {
+std::int64_t EventLog::write(const Event &event) { return writeAt(event, nullptr); }
+
+std::int64_t EventLog::write(const Event &event, std::int64_t t) { return writeAt(event, &t); }
+
+std::int64_t EventLog::writeAt(const Event &event, const std::int64_t *explicitT) {
   std::string tail;
   tail.reserve(128);
   tail += ",\"event\":\"";
@@ -86,7 +90,7 @@ std::int64_t EventLog::write(const Event &event) {
   tail += "}\n";
 
   const std::lock_guard<std::mutex> guard(mutex_);
-  const std::int64_t t = clock_.nowMs();
+  const std::int64_t t = explicitT != nullptr ? *explicitT : clock_.nowMs();
   out_ << "{\"t\":" << t << tail;
   out_.flush();
   return t;

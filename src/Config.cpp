@@ -240,6 +240,18 @@ void parseSettings(const json& root, Config& cfg, const std::unordered_set<std::
         cfg.reinforcements.idleMs =
             getInteger(r, "idleMs", "reinforcements", 1);
     }
+    const auto kitchen = root.find("kitchen");
+    if (kitchen != root.end()) {
+        if (!kitchen->is_object()) {
+            fail("kitchen", "debe ser un objeto");
+        }
+        cfg.kitchen.pauseEveryMs = getInteger(*kitchen, "pauseEveryMs", "kitchen", 1);
+        cfg.kitchen.pauseMs = getInteger(*kitchen, "pauseMs", "kitchen", 0);
+        if (cfg.kitchen.pauseMs >= cfg.kitchen.pauseEveryMs) {
+            fail("kitchen.pauseMs", "debe ser menor que pauseEveryMs");
+        }
+        cfg.kitchen.enabled = true;
+    }
 }
 
 }

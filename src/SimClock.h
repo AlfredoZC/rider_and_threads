@@ -21,6 +21,10 @@ inline std::int64_t saturatingAddMs(std::int64_t a, std::int64_t b) {
 
 class SimClock {
 public:
+    // Tope de una duracion real, en microsegundos (~31 anios): con steady_clock (ns en int64)
+    // now() + duracion nunca desborda, ni hacia el futuro ni hacia el pasado.
+    static constexpr double kMaxRealUs = 1e15;
+
     explicit SimClock(double timeScale)
         : start_(std::chrono::steady_clock::now()), timeScale_(timeScale) {
         assert(timeScale > 0.0);
@@ -29,15 +33,18 @@ public:
     std::int64_t nowMs() const {
         const std::chrono::duration<double, std::milli> real =
             std::chrono::steady_clock::now() - start_;
-        return static_cast<std::int64_t>(real.count() * timeScale_);
+        const double sim = real.count() * timeScale_;
+        if (sim >= 9.2e18) {
+            return INT64_MAX;
+        }
+        return static_cast<std::int64_t>(sim);
     }
 
     // Conversion sim -> real. Se recorta en double ANTES de convertir a entero
     // (llround fuera de rango es indefinido) y por ambos lados; 1e15 us ~ 31 anios.
     std::chrono::microseconds realDuration(std::int64_t simMs) const {
-        constexpr double kLimitUs = 1.0e15;
         const double us = std::clamp(static_cast<double>(simMs) * 1000.0 / timeScale_,
-                                     -kLimitUs, kLimitUs);
+                                     -kMaxRealUs, kMaxRealUs);
         return std::chrono::microseconds(std::llround(us));
     }
 

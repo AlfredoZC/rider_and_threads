@@ -18,6 +18,8 @@ CAMPOS = {
     "courierBreakStarted": {"courier"},
     "courierBreakEnded": {"courier"},
     "simulationStopping": set(),
+    "restaurantPaused": {"restaurant"},
+    "restaurantResumed": {"restaurant"},
 }
 
 LLEVA_A = {
@@ -38,11 +40,60 @@ FINALES = {"delivered", "rejected", "pending"}
 
 MOTIVOS = {"queueFull", "unreachable", "noCourier"}
 
+def calendario(ruta_config):
+    """Devuelve (P, D, {restaurante: (indice, total)}) o None si no hay bloque kitchen."""
+    with open(ruta_config, encoding="utf-8") as f:
+        cfg = json.load(f)
+    cocina = cfg.get("kitchen")
+    if cocina is None:
+        return None
+    ids = [r["id"] for r in cfg["restaurants"]]
+    return cocina["pauseEveryMs"], cocina["pauseMs"], {rid: (i, len(ids)) for i, rid in enumerate(ids)}
+
+
+# Cada valor sale escapado: barra, espacio, `=` y controles como \xHH (hex en minuscula); el resto
+# literal. Una barra o un `=` sin escapar dentro de un valor es un formato invalido.
+CAMPO_FILA = r"((?:[^\s\\=]|\\x[0-9a-f]{2})+)"
+FILA = re.compile(r"^\[fila\] t=(-?\d+) courier=" + CAMPO_FILA + " order=" + CAMPO_FILA +
+                  " restaurant=" + CAMPO_FILA + r" pausa=(si|no)$")
+ESCAPE_FILA = re.compile(r"\\x([0-9a-f]{2})")
+
+
+def desescapar(valor):
+    r"""Revierte el escape de la linea [fila] (`\xHH`: barra, espacio, =, control)."""
+    return ESCAPE_FILA.sub(lambda m: chr(int(m.group(1), 16)), valor)
+
+
+def leer_fila(ruta_stderr):
+    """Lee las lineas `[fila] ...` de stderr. Devuelve (llegadas por restaurante, con pausa, errores)."""
+    llegadas = defaultdict(list)
+    con_pausa = 0
+    errores = []
+    with open(ruta_stderr, encoding="utf-8", errors="replace") as f:
+        for n, linea in enumerate(f, 1):
+            linea = linea.rstrip("\r\n")
+            if not linea.startswith("[fila]"):
+                continue
+            m = FILA.match(linea)
+            if m is None:
+                errores.append(f"stderr linea {n}: formato [fila] invalido: {linea[:100]!r}")
+                continue
+            llegadas[desescapar(m.group(4))].append(desescapar(m.group(3)))
+            if m.group(5) == "si":
+                con_pausa += 1
+    return llegadas, con_pausa, errores
+
+
 def main(argv):
-    if len(argv) != 3:
-        print(__doc__)
+    if len(argv) not in (3, 4, 5):
+        print("uso: validate_log.py <log> <stdout> [config.json] [stderr]")
         return 2
     ruta_log, ruta_salida = argv[1], argv[2]
+    cal = calendario(argv[3]) if len(argv) >= 4 and argv[3] not in ("", "-") else None
+    ruta_stderr = argv[4] if len(argv) == 5 else None
+    en_pausa = {}
+    pausas_de = Counter()
+    iniciados = defaultdict(list)
 
     errores = []
     eventos = Counter()
@@ -89,6 +140,40 @@ def main(argv):
             t_valida = isinstance(e.get("t"), int) and not isinstance(e.get("t"), bool)
             if not t_valida:
                 errores.append(f"linea {n}: falta t o no es entero")
+
+            rest = e.get("restaurant")
+            if nombre == "restaurantPaused":
+                if rest in en_pausa:
+                    errores.append(f"linea {n}: {rest} se pausa estando ya en pausa")
+                en_pausa[rest] = e.get("t")
+                if simulacion_parando:
+                    errores.append(f"linea {n}: restaurantPaused despues de simulationStopping")
+                if cal is not None:
+                    P, D, orden_json = cal
+                    if rest not in orden_json:
+                        errores.append(f"linea {n}: restaurante {rest} no esta en la config")
+                    else:
+                        i, total = orden_json[rest]
+                        esperado = pausas_de[rest] * P + (i * P) // total
+                        if e.get("t") != esperado:
+                            errores.append(f"linea {n}: {rest} se pausa en t={e.get('t')}, "
+                                           f"el calendario dice {esperado}")
+            elif nombre == "restaurantResumed":
+                if rest not in en_pausa:
+                    errores.append(f"linea {n}: {rest} se reanuda sin estar en pausa")
+                else:
+                    inicio = en_pausa.pop(rest)
+                    if simulacion_parando:
+                        errores.append(f"linea {n}: restaurantResumed despues de simulationStopping")
+                    if cal is not None and e.get("t") != inicio + cal[1]:
+                        errores.append(f"linea {n}: {rest} se reanuda en t={e.get('t')}, "
+                                       f"el calendario dice {inicio + cal[1]}")
+                    pausas_de[rest] += 1
+            elif nombre == "pickupStarted":
+                if rest in en_pausa:
+                    errores.append(f"linea {n}: pickupStarted de {e.get('order')} en {rest} "
+                                   f"dentro de una pausa")
+                iniciados[rest].append(e.get("order"))
             extra = set(e) - {"t", "event"} - CAMPOS[nombre]
             if extra:
                 errores.append(f"linea {n}: {nombre} lleva campos de mas: {sorted(extra)}")
@@ -207,7 +292,7 @@ def main(argv):
     obligatorios = ["created", "delivered", "rejected", "pending", "reassigned",
                     "breakdowns", "avgDeliveryMs", "maxDeliveryMs", "deliveredPerCourier",
                     "reinforcementsJoined", "reinforcementsRetired", "breaks",
-                    "breaksPerCourier"]
+                    "breaksPerCourier", "pauses", "pickupsDelayedByPause"]
     for campo in obligatorios:
         if campo not in resumen:
             errores.append(f"resumen: falta el campo {campo}")
@@ -249,6 +334,29 @@ def main(argv):
         errores.append("resumen: reinforcementsJoined no coincide con courierJoined")
     if resumen["reinforcementsRetired"] != eventos["courierRetired"]:
         errores.append("resumen: reinforcementsRetired no coincide con courierRetired")
+
+    if resumen["pauses"] != eventos["restaurantPaused"]:
+        errores.append(f"resumen: pauses={resumen['pauses']} pero el log tiene "
+                       f"{eventos['restaurantPaused']} lineas restaurantPaused")
+    demoradas = resumen["pickupsDelayedByPause"]
+    if not isinstance(demoradas, int) or isinstance(demoradas, bool) or demoradas < 0:
+        errores.append(f"resumen: pickupsDelayedByPause={demoradas!r} tiene que ser un entero >= 0")
+    if not isinstance(resumen["pauses"], int) or isinstance(resumen["pauses"], bool):
+        errores.append(f"resumen: pauses={resumen['pauses']!r} tiene que ser un entero")
+
+    if ruta_stderr is not None:
+        llegadas, con_pausa, errs = leer_fila(ruta_stderr)
+        errores.extend(errs)
+        for rest, ordenes in iniciados.items():
+            esperado = llegadas.get(rest, [])
+            if ordenes != esperado[:len(ordenes)]:
+                errores.append(f"{rest}: los pickupStarted {ordenes[:8]}... no siguen el orden de "
+                               f"llegada de stderr {esperado[:8]}...")
+        if isinstance(demoradas, int) and demoradas < con_pausa:
+            errores.append(f"resumen: pickupsDelayedByPause={demoradas} es menor que las "
+                           f"{con_pausa} llegadas con pausa=si de stderr")
+        print(f"stderr: {sum(len(v) for v in llegadas.values())} llegadas a fila, "
+              f"{con_pausa} con pausa=si")
 
     if resumen["pending"] != len(vivas):
         errores.append(f"resumen: pending={resumen['pending']} pero quedaron {len(vivas)} "

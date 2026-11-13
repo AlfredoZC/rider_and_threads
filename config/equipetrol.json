@@ -9520,7 +9520,7 @@
       "id": "r0",
       "name": "Burger King",
       "node": "n15",
-      "pickupSlots": 2,
+      "pickupSlots": 1,
       "prepTimeMs": [
         60000,
         240000
@@ -9540,7 +9540,7 @@
       "id": "r2",
       "name": "Fazenda",
       "node": "n545",
-      "pickupSlots": 2,
+      "pickupSlots": 1,
       "prepTimeMs": [
         60000,
         240000
@@ -9560,7 +9560,7 @@
       "id": "r4",
       "name": "La Palette",
       "node": "n464",
-      "pickupSlots": 2,
+      "pickupSlots": 1,
       "prepTimeMs": [
         60000,
         240000
@@ -9605,8 +9605,12 @@
     "timeScale": 60
   },
   "reinforcements": {
-    "max": 4,
+    "max": 0,
     "threshold": 5,
     "idleMs": 300000
+  },
+  "kitchen": {
+    "pauseEveryMs": 900000,
+    "pauseMs": 240000
   }
 }

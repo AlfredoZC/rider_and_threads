@@ -3,7 +3,9 @@
 std::string buildSummary(const OrderStats& stats, std::int64_t breakdowns,
                          const std::vector<CourierActor*>& fleet,
                          std::int64_t reinforcementsJoined,
-                         std::int64_t reinforcementsRetired) {
+                         std::int64_t reinforcementsRetired,
+                         std::int64_t pauses,
+                         std::int64_t pickupsDelayedByPause) {
     std::string out;
     out.reserve(256);
     out += "{\"created\":" + std::to_string(stats.created);
@@ -19,6 +21,8 @@ std::string buildSummary(const OrderStats& stats, std::int64_t breakdowns,
     out += ",\"urgentCreated\":" + std::to_string(stats.urgentCreated);
     out += ",\"urgentDelivered\":" + std::to_string(stats.urgentDelivered);
     out += ",\"avgUrgentDeliveryMs\":" + std::to_string(stats.avgUrgentDeliveryMs);
+    out += ",\"pauses\":" + std::to_string(pauses);
+    out += ",\"pickupsDelayedByPause\":" + std::to_string(pickupsDelayedByPause);
 
     out += ",\"deliveredPerCourier\":{";
     bool first = true;

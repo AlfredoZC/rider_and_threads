@@ -24,6 +24,7 @@
 #include "Fleet.h"
 #include "OrderBook.h"
 #include "OrderGenerator.h"
+#include "KitchenScheduler.h"
 #include "Restaurant.h"
 #include "SimClock.h"
 #include "Summary.h"
@@ -296,9 +297,20 @@ int main(int argc, char** argv) {
     OrderBook book(cfg.maxPending, clock, *log);
     OrderGenerator generator(cfg, clock, book);
     Restaurants restaurants;
-    for (const RestaurantConfig& r : cfg.restaurants) {
-        restaurants.emplace(r.id, std::make_unique<Restaurant>(r.id, r.pickupSlots));
+    std::vector<Restaurant*> restaurantsInOrder;
+    for (std::size_t i = 0; i < cfg.restaurants.size(); ++i) {
+        const RestaurantConfig& r = cfg.restaurants[i];
+        KitchenSchedule schedule;
+        if (cfg.kitchen.enabled) {
+            schedule = KitchenSchedule{cfg.kitchen.pauseEveryMs, cfg.kitchen.pauseMs,
+                                       static_cast<std::int64_t>(i),
+                                       static_cast<std::int64_t>(cfg.restaurants.size())};
+        }
+        auto restaurant = std::make_unique<Restaurant>(r.id, r.pickupSlots, schedule, &clock);
+        restaurantsInOrder.push_back(restaurant.get());
+        restaurants.emplace(r.id, std::move(restaurant));
     }
+    KitchenScheduler kitchen(restaurantsInOrder, clock, *log);
 
     const SimContext ctx{graph, clock, *log, book, restaurants};
 
@@ -319,6 +331,7 @@ int main(int argc, char** argv) {
     if (!args.noWindow) {
         cv::namedWindow(windowName, cv::WINDOW_AUTOSIZE);
     }
+    kitchen.start();
     std::cout << "Simulation has started..." << std::endl;
 
     const std::int64_t durationMs = cfg.durationS * 1000;
@@ -365,6 +378,9 @@ int main(int argc, char** argv) {
     generator.requestStop();
     generatorThread.join();
 
+    kitchen.requestStop();
+    kitchen.join();
+
     Event stopping;
     stopping.name = EventName::kSimulationStopping;
     log->write(stopping);
@@ -381,10 +397,17 @@ int main(int argc, char** argv) {
 
     book.markRemainingAsPending();
     const OrderStats stats = book.stats();
+    std::int64_t pausesTotal = 0;
+    std::int64_t delayedTotal = 0;
+    for (const Restaurant* r : restaurantsInOrder) {
+        pausesTotal += r->pauses();
+        delayedTotal += r->delayedByPause();
+    }
 
     std::cout << buildSummary(stats, stats.breakdowns, fleet.allSnapshot(),
                               fleet.reinforcementsJoined(),
-                              fleet.reinforcementsRetired()) << std::endl;
+                              fleet.reinforcementsRetired(), pausesTotal,
+                              delayedTotal) << std::endl;
 
     if (!args.noWindow) {
         cv::destroyAllWindows();

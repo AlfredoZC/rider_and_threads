@@ -1,13 +1,22 @@
 #include "CourierActor.h"
 
+#include "ArrivalLine.h"
 #include "Fleet.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <iostream>
+#include <mutex>
+#include <string>
 
 namespace {
 constexpr std::int64_t kPickupServiceMs = 1000;
+
+std::mutex& queueReportMutex() {
+    static std::mutex m;
+    return m;
+}
 }
 
 CourierActor::CourierActor(CourierId id, const std::string& startNode, int bagCapacity,
@@ -124,16 +133,37 @@ void CourierActor::deliver(Router& router, OrderId orderId) {
     const auto entry = ctx_.restaurants.find(order.restaurantId);
     Restaurant* const restaurant =
         entry == ctx_.restaurants.end() ? nullptr : entry->second.get();
-    if (restaurant != nullptr && !restaurant->acquire()) {
-        return;
+    // t < 0: el restaurante no tiene reloj; entonces el log pone su propia hora.
+    const auto logPickupStarted = [this, orderId, &order](std::int64_t t) {
+        Event e;
+        e.name = EventName::kPickupStarted;
+        e.order = orderId;
+        e.courier = id_;
+        e.restaurant = order.restaurantId;
+        if (t >= 0) {
+            ctx_.log.write(e, t);
+        } else {
+            ctx_.log.write(e);
+        }
+    };
+    // La llegada a la fila se informa por stderr (no es un evento del log): una sola linea
+    // armada completa y un solo operator<<, bajo un candado hoja (se toma con el candado del
+    // restaurante tomado y nunca se toma otro candado dentro).
+    const auto reportArrival = [this, orderId, &order](std::int64_t t, bool paused) {
+        const std::int64_t shown = t >= 0 ? t : ctx_.clock.nowMs();
+        const std::string line =
+            arrivalLine(shown, courierLabel(id_), "o" + std::to_string(orderId),
+                        order.restaurantId, paused);
+        const std::lock_guard<std::mutex> guard(queueReportMutex());
+        std::cerr << line;
+    };
+    if (restaurant != nullptr) {
+        if (!restaurant->acquire(reportArrival, logPickupStarted)) {
+            return;
+        }
+    } else {
+        logPickupStarted(ctx_.clock.nowMs());
     }
-
-    Event started;
-    started.name = EventName::kPickupStarted;
-    started.order = orderId;
-    started.courier = id_;
-    started.restaurant = order.restaurantId;
-    ctx_.log.write(started);
 
     if (!waitSim(kPickupServiceMs)) {
         if (restaurant != nullptr) {

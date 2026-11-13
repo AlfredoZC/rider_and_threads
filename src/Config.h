@@ -39,6 +39,11 @@ struct ReinforcementConfig {
     int threshold = 0;
     std::int64_t idleMs = 0;
 };
+struct KitchenConfig {
+    bool enabled = false;
+    std::int64_t pauseEveryMs = 0;
+    std::int64_t pauseMs = 0;
+};
 struct Config {
     std::filesystem::path imagePath;
     std::string attribution;
@@ -72,6 +77,7 @@ struct Config {
 
     double urgentProbability = 0.0;
     std::int64_t agingMs = 0;
+    KitchenConfig kitchen;
 };
 
 class ConfigError : public std::runtime_error {
