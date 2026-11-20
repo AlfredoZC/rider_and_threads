@@ -36,6 +36,7 @@
 #include "SimContext.h"
 #include "accel/Backend.h"
 #include "accel/DeliveryHistogram.h"
+#include "accel/OpenOrders.h"
 #include "accel/GpuInfo.h"
 #include "bench/BenchCli.h"
 #include "bench/BenchMain.h"
@@ -550,6 +551,21 @@ int main(int argc, char** argv) {
         const accel::DeliveryHistogramResult histogram =
             accel::deliveryTimeHistogram(book.deliveredTimesMs(), backend.worker.get());
         std::cerr << accel::formatDeliveryHistogram(histogram.bins, histogram.usedGpu ? "gpu" : "cpu")
+                  << std::endl;
+    }
+
+    // Pedidos en curso a lo largo del tiempo (scan de +1/-1 por evento) y su pico, tambien por el
+    // hilo de la GPU con respaldo CPU. Solo stderr; los pedidos sin cerrar quedan abiertos al final.
+    {
+        const std::vector<OrderSpan> spans = book.orderSpans();
+        std::vector<accel::OrderLifetime> lifetimes;
+        lifetimes.reserve(spans.size());
+        for (const OrderSpan& span : spans) {
+            lifetimes.push_back({span.createdMs, span.closedMs == kNoTime ? accel::kStillOpen : span.closedMs});
+        }
+        const accel::OpenOrdersSummary openOrders = accel::openOrdersSummary(lifetimes, backend.worker.get());
+        std::cerr << accel::formatOpenOrders(openOrders.peakOpenOrders, openOrders.peakTimeMs, openOrders.openAtEnd,
+                                             openOrders.usedGpu ? "gpu" : "cpu")
                   << std::endl;
     }
 

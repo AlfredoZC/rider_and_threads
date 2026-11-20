@@ -263,6 +263,22 @@ Código: `src/accel/DeliveryHistogram.{h,cpp}`, `src/accel/cuda/DeliveryHistogra
 `histogram_naive` mide solo la GPU con un atómico global por entrega, para ver el costo de la contención
 frente a la versión privatizada. Tamaños por defecto: 1e3 a 1e7 tiempos sintéticos (log-normal, mediana 28 min).
 
+#### Aplicación 09: pedidos en curso a lo largo del tiempo y su pico (`orders_in_progress`)
+
+Cada pedido aporta un evento +1 al crearse y un −1 al entregarse o rechazarse; ordenados por tiempo (en un
+empate el +1 va primero, así la cuenta nunca baja de 0), la suma acumulada (scan inclusivo) es la cantidad de
+pedidos abiertos en cada momento y su máximo es el pico. En la GPU: scan jerárquico Kogge–Stone con doble
+buffer (bloques de 512) y reducción `max` con una clave de 64 bits (pico + evento más temprano); la CPU de N
+hilos hace dos pasadas con `ThreadPool::parallelFor`. Dentro del programa: al terminar la simulación, `main`
+arma los eventos con los tiempos de creación y cierre del `OrderBook` (`OrderBook::orderSpans`, que ahora
+guarda también el instante del rechazo en `Order::rejectedMs`), los pide al `GpuWorker` (respaldo CPU) e
+imprime en stderr `[estadisticas] pedidos en curso: pico P en t=..s, abiertos al final A`; stdout no cambia.
+Código: `src/accel/OpenOrders.{h,cpp}`, `src/accel/cuda/OpenOrders.cu`.
+
+```bash
+./delivery_sim ../config/ciudad.json --headless --bench o.csv --apps orders_in_progress --reps 2
+```
+
 ## 3. Entrada y salida
 
 - **Entrada:** archivo JSON con el formato de la sección 5 del enunciado (`map`, `nodes`, `streets`,

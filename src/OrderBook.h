@@ -28,6 +28,12 @@ struct OrderStats {
     std::int64_t avgUrgentDeliveryMs = 0;
 };
 
+// Creacion y cierre (entrega o rechazo) de un pedido; closedMs = kNoTime si sigue abierto.
+struct OrderSpan {
+    std::int64_t createdMs = kNoTime;
+    std::int64_t closedMs = kNoTime;
+};
+
 class OrderBook {
 public:
     OrderBook(int maxPending, const SimClock& clock, EventLog& log);
@@ -79,6 +85,9 @@ public:
 
     // Tiempo total (ms) de cada pedido entregado, en cualquier orden.
     std::vector<std::int64_t> deliveredTimesMs() const;
+
+    // Creacion y cierre de cada pedido (en cualquier orden).
+    std::vector<OrderSpan> orderSpans() const;
 
 private:
     bool setState(Order& order, OrderState to);
