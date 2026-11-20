@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.." || exit 1
 
 FLAGS="-std=c++17 -Wall -Wextra -g -pthread -Isrc -Ithird_party"
 # Mismos globs que CMake (sin src/accel/cuda); main.cpp queda fuera.
-SRC=$(ls src/*.cpp src/accel/*.cpp src/accel/cpu/*.cpp 2>/dev/null | grep -v '^src/main[.]cpp$')
+SRC=$(ls src/*.cpp src/accel/*.cpp src/accel/cpu/*.cpp src/bench/*.cpp 2>/dev/null | grep -v '^src/main[.]cpp$')
 mkdir -p tests/bin
 
 STRAY=$(grep -l '^[[:space:]]*int[[:space:]]\+main[[:space:]]*(' $SRC 2>/dev/null)

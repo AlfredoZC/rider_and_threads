@@ -35,6 +35,8 @@
 #include "CityGraph.h"
 #include "SimContext.h"
 #include "accel/GpuInfo.h"
+#include "bench/BenchCli.h"
+#include "bench/BenchMain.h"
 
 namespace {
 
@@ -333,6 +335,14 @@ private:
 }
 
 int main(int argc, char** argv) {
+    // Modo bench (--bench / --bench-once): no corre la simulacion ni abre ventana; ver src/bench/.
+    if (argc >= 2) {
+        const std::vector<std::string> benchArgs(argv + 1, argv + argc);
+        if (bench::isBenchInvocation(benchArgs)) {
+            return bench::runBenchMode(benchArgs);
+        }
+    }
+
     Arguments args;
     if (!parseArguments(argc, argv, args)) {
         return 2;

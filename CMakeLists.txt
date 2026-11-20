@@ -39,7 +39,8 @@ find_package(Threads REQUIRED)
 
 file(GLOB SOURCES
   "${PROJECT_SOURCE_DIR}/src/*.cpp"
-  "${PROJECT_SOURCE_DIR}/src/accel/*.cpp")
+  "${PROJECT_SOURCE_DIR}/src/accel/*.cpp"
+  "${PROJECT_SOURCE_DIR}/src/bench/*.cpp")
 if(USE_CUDA)
   file(GLOB ACCEL_CUDA_SOURCES "${PROJECT_SOURCE_DIR}/src/accel/cuda/*.cu")
   list(APPEND SOURCES ${ACCEL_CUDA_SOURCES})
@@ -50,7 +51,39 @@ else()
 endif()
 add_executable(delivery_sim ${SOURCES})
 
-target_include_directories(delivery_sim PRIVATE ${PROJECT_SOURCE_DIR}/src)
+# Datos del build para el modo bench (src/bench/BuildInfo.cpp): tipo, sanitizers, flags y commit.
+# El bench se niega a medir si el tipo no es Release o si hay sanitizers.
+set(BENCH_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
+set(BENCH_SANITIZER "none")
+if(ENABLE_TSAN)
+  set(BENCH_SANITIZER "thread")
+elseif(ENABLE_ASAN)
+  set(BENCH_SANITIZER "address,undefined")
+endif()
+string(TOUPPER "${CMAKE_BUILD_TYPE}" BENCH_BUILD_TYPE_UPPER)
+set(BENCH_CXX_FLAGS "-std=c++17 ${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${BENCH_BUILD_TYPE_UPPER}} -Wall -Wextra")
+set(BENCH_CUDA_FLAGS "")
+if(USE_CUDA)
+  set(BENCH_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} ${CMAKE_CUDA_FLAGS_${BENCH_BUILD_TYPE_UPPER}} -lineinfo archs=${CMAKE_CUDA_ARCHITECTURES}")
+endif()
+foreach(var BENCH_BUILD_TYPE BENCH_CXX_FLAGS BENCH_CUDA_FLAGS)
+  string(REPLACE "\\" "\\\\" ${var} "${${var}}")
+  string(REPLACE "\"" "\\\"" ${var} "${${var}}")
+  string(STRIP "${${var}}" ${var})
+endforeach()
+configure_file("${PROJECT_SOURCE_DIR}/src/bench/BuildInfoGenerated.h.in"
+               "${PROJECT_BINARY_DIR}/generated/BuildInfoGenerated.h" @ONLY)
+
+# El commit (git describe --always --dirty) se regenera en CADA build, no solo al configurar.
+set(BENCH_GIT_HEADER "${PROJECT_BINARY_DIR}/generated/BuildGit.h")
+set(BENCH_GIT_COMMAND "${CMAKE_COMMAND}" "-DSRC_DIR=${PROJECT_SOURCE_DIR}" "-DOUT=${BENCH_GIT_HEADER}"
+    -P "${PROJECT_SOURCE_DIR}/cmake/GitCommit.cmake")
+execute_process(COMMAND ${BENCH_GIT_COMMAND})
+add_custom_target(bench_git_commit ALL COMMAND ${BENCH_GIT_COMMAND}
+  BYPRODUCTS "${BENCH_GIT_HEADER}" COMMENT "Actualizando el commit del build")
+add_dependencies(delivery_sim bench_git_commit)
+
+target_include_directories(delivery_sim PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT_BINARY_DIR}/generated)
 target_include_directories(delivery_sim SYSTEM PRIVATE
   ${PROJECT_SOURCE_DIR}/third_party
   ${OpenCV_INCLUDE_DIRS}

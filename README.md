@@ -138,6 +138,78 @@ instante real en que el reloj simulado llega a `durationS`), sin sleeps ni sonde
 `sigwait`, que despierta al principal. Después se ejecuta el mismo orden de apagado de siempre.
 Prueba automatizada: `bash tools/check_headless.sh build/delivery_sim`.
 
+### Modo bench (`--bench`, `--bench-once`)
+
+Mide las aplicaciones de la GPU con el protocolo de la sección 2.2 del enunciado y escribe un CSV. No corre
+la simulación ni abre ventana. **Solo mide un build Release** (`-DCMAKE_BUILD_TYPE=Release`, sin TSan/ASan):
+con cualquier otro se niega con código 2 ("Never time a Debug or sanitizer build"), incluido el
+`RelWithDebInfo` que usa `cmake ..` por defecto. Decisiones y alternativas: [`docs/adr/0003-modo-bench.md`](docs/adr/0003-modo-bench.md).
+
+```bash
+mkdir build-rel && cd build-rel && cmake -DCMAKE_BUILD_TYPE=Release .. && make          # CPU
+mkdir build-cuda && cd build-cuda && cmake -DUSE_CUDA=ON -DCMAKE_BUILD_TYPE=Release .. && make   # con GPU
+
+# Todas las aplicaciones y tamaños, 10 repeticiones, barrido de hilos 1,2,4,6,8,12,16 (recortado a los núcleos lógicos)
+./delivery_sim ../config/ciudad.json --headless --bench results.csv
+# Una prueba rápida
+./delivery_sim ../config/ciudad.json --headless --bench r.csv --apps calib_launch --sizes 100,1000 --reps 2 --threads 1,4 --force
+# Una sola corrida, para ncu / compute-sanitizer (sin --version corre cada versión una vez)
+ncu --set full -k regex:calib --launch-count 1 ./delivery_sim ../config/ciudad.json --headless --bench-once --app calib_copy --size 1048576
+compute-sanitizer --tool memcheck ./delivery_sim ../config/ciudad.json --headless --bench-once --app calib_launch --size 100 --version gpu_e2e
+bash ../tools/check_bench.sh ./delivery_sim      # verifica CSV, .env.json, rotación y rechazos (solo Release)
+```
+
+| Argumento | Significado |
+|-----------|-------------|
+| `--bench <results.csv>` | Modo medición; no sobrescribe un CSV existente sin `--force` |
+| `--apps a,b` | Aplicaciones a medir (por defecto todas las registradas: `calib_copy`, `calib_launch`) |
+| `--reps N` | Repeticiones medidas, 1 a 100000 (por defecto 10; el enunciado pide al menos 10 para el informe) |
+| `--threads 1,2,4` | Barrido de `cpuN`; por defecto 1,2,4,6,8,12,16 recortado a `hardware_concurrency` |
+| `--sizes s1,s2` | Reemplaza los tamaños de cada aplicación (para pruebas rápidas) |
+| `--seed S` | Semilla de las entradas, igual para todas las versiones (por defecto 12345) |
+| `--bench-once --app X --size N [--version V] [--threads N]` | Una corrida sin calentamiento ni CSV; imprime las filas en `stdout` |
+
+Protocolo por (aplicación, tamaño): una corrida de calentamiento de cada versión sin registrar y luego las
+repeticiones, con el **orden de versiones rotado** una posición en cada repetición. Cada corrida se compara
+contra `cpu1`; si alguna da `correct=no` (o una corrida no se pudo ejecutar) el programa termina con código 1
+después de escribir el CSV. Sin CUDA, o sin GPU, las versiones `gpu_*` se omiten con un aviso.
+
+Formato del CSV, una línea por corrida (`stdout` imprime además una tabla con mediana, mínimo y máximo):
+
+```
+application,version,size,rep,ms,correct,threads,seed,h2d_ms,kernel_ms,d2h_ms
+calib_copy,cpu1,4096,0,0.000098,yes,1,12345,,,
+calib_copy,gpu_e2e,1048576,0,0.378279,yes,1,12345,0.138880,,0.233280
+```
+
+| Columna | Contenido |
+|---------|-----------|
+| `application`, `version`, `size`, `rep` | Aplicación, versión (`cpu1`, `cpuN`, `gpu_kernel`, `gpu_e2e`), tamaño (cada aplicación define su unidad) y repetición (desde 0) |
+| `ms` | Tiempo de la versión: `steady_clock` en `cpu1`, `cpuN` y `gpu_e2e` (con `cudaDeviceSynchronize` antes de parar); `cudaEvent` en `gpu_kernel` |
+| `correct` | `yes` o `no`: el resultado es igual al de `cpu1` |
+| `threads` | Hilos de la versión (1 para `cpu1` y las GPU) |
+| `seed` | Semilla de la entrada |
+| `h2d_ms`, `kernel_ms`, `d2h_ms` | Tiempos de `cudaEvent` (vacíos si no aplican) |
+
+Junto al CSV queda `<csv>.env.json` con el hardware y el build: modelo de CPU, `hardware_concurrency`, GPU
+(nombre, compute capability, SMs, memoria, relojes, ancho del bus y ancho de banda pico teórico), versiones
+de CUDA runtime y driver, compilador, tipo de build, flags, commit, semilla y barrido de hilos.
+
+Aplicaciones incluidas, de **calibración de overheads** (no son una de las diez aplicaciones del §1 del
+enunciado: dan los techos de copia y de lanzamiento para el análisis y el roofline):
+
+- `calib_copy` (`size` = bytes, de 4 KB a 256 MB): `cpu1` = `memcpy`; `cpuN` = `memcpy` particionado;
+  `gpu_kernel` = copia dispositivo→dispositivo con un kernel (ancho de banda de la VRAM); `gpu_e2e` =
+  ida y vuelta H2D + D2H con memoria paginable, con `h2d_ms` y `d2h_ms`.
+- `calib_launch` (`size` = N lanzamientos): `gpu_kernel` = N lanzamientos de un kernel de un hilo seguidos
+  y una sola espera; `gpu_e2e` = cada lanzamiento seguido de `cudaDeviceSynchronize`; `cpu1` = N llamadas
+  a una función trivial; `cpuN` = N despachos del pool de hilos de `src/accel/ThreadPool.h`.
+
+Para agregar una aplicación: un archivo en `src/bench/` con una clase que herede de `BenchApp` y la línea
+`BENCH_REGISTER_APP("nombre", Clase);`. `src/bench/CitySubgraph.h` ofrece `extractRegion(config, nodo, n)`,
+un subgrafo conexo de la ciudad real con exactamente `n` nodos (BFS determinista desde un nodo de Equipetrol,
+con las calles y sus sentidos) para los tamaños de grafo.
+
 ## 3. Entrada y salida
 
 - **Entrada:** archivo JSON con el formato de la sección 5 del enunciado (`map`, `nodes`, `streets`,
@@ -200,7 +272,7 @@ config/ciudad.json        ciudad grande para medir la GPU (ver docs/ciudad.md)
 config/tests/             escenarios de prueba (válidos e inválidos)
 data/equipetrol.png       imagen de OpenStreetMap usada de fondo
 data/ciudad.osm, .png     extracto OSM de la ciudad y su fondo dibujado (licencia en data/NOTICE.md)
-src/                      código fuente C++17
+src/                      código fuente C++17 (src/accel: backend CPU/CUDA y pool de hilos; src/bench: modo bench)
 tests/                    programas de prueba y run.sh, que los compila y ejecuta
 docs/                     informe técnico y capturas
 third_party/nlohmann/     librería JSON (un solo header)

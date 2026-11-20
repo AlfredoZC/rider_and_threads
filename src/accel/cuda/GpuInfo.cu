@@ -33,6 +33,14 @@ GpuInfo gpuInfo() {
     info.computeMajor = prop.major;
     info.computeMinor = prop.minor;
     info.totalMemoryBytes = prop.totalGlobalMem;
+    info.multiProcessorCount = prop.multiProcessorCount;
+    // Los campos clockRate/memoryClockRate de cudaDeviceProp estan obsoletos: se piden como atributos.
+    cudaDeviceGetAttribute(&info.clockRateKHz, cudaDevAttrClockRate, 0);
+    cudaDeviceGetAttribute(&info.memoryClockRateKHz, cudaDevAttrMemoryClockRate, 0);
+    cudaDeviceGetAttribute(&info.memoryBusWidthBits, cudaDevAttrGlobalMemoryBusWidth, 0);
+    cudaRuntimeGetVersion(&info.runtimeVersion);
+    cudaDriverGetVersion(&info.driverVersion);
+    cudaGetLastError();  // un atributo no disponible no debe dejar un error pegajoso
     return info;
 }
 
