@@ -19,6 +19,12 @@ Dispatcher::QuoteFn defaultQuote(const SimContext& ctx) {
 // Piso del plazo de reintento: con quoteTimeoutMs = 0 no se debe girar sin dormir.
 constexpr std::int64_t kMinRetryMs = 50;
 constexpr std::int64_t kMaxWaitMs = 24LL * 3600 * 1000;  // evita now()+ms desbordado
+
+// Milisegundos que quedan hasta el plazo (0 si ya vencio).
+std::int64_t remainingMs(std::chrono::steady_clock::time_point deadline) {
+    const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+    return std::max<std::int64_t>(left.count(), 0);
+}
 }  // namespace
 
 Dispatcher::Dispatcher(const Config& cfg, const SimContext& ctx,
@@ -31,7 +37,8 @@ Dispatcher::Dispatcher(const Config& cfg, const SimContext& ctx,
       quote_(defaultQuote(ctx)),
       router_(ctx.graph),
       pool_(ctx.graph, static_cast<unsigned>(cfg.couriers) +
-                           static_cast<unsigned>(cfg.reinforcements.max)) {}
+                           static_cast<unsigned>(cfg.reinforcements.max)),
+      filter_(ctx.gpu) {}
 
 Dispatcher::Dispatcher(const Config& cfg, const SimContext& ctx, Fleet& fleet)
     : ctx_(ctx),
@@ -42,7 +49,8 @@ Dispatcher::Dispatcher(const Config& cfg, const SimContext& ctx, Fleet& fleet)
       quote_(defaultQuote(ctx)),
       router_(ctx.graph),
       pool_(ctx.graph, static_cast<unsigned>(cfg.couriers) +
-                           static_cast<unsigned>(cfg.reinforcements.max)) {}
+                           static_cast<unsigned>(cfg.reinforcements.max)),
+      filter_(ctx.gpu) {}
 
 std::vector<CourierActor*> Dispatcher::activeCouriers() const {
     if (fleet_ != nullptr) {
@@ -136,22 +144,107 @@ void Dispatcher::spawnIfNeeded(std::size_t waiting) {
 }
 
 Dispatcher::DispatchResult Dispatcher::dispatchOne(const Order& order) {
-    const OrderId orderId = order.id;
-
     if (destinoInalcanzable(order)) {
-        ctx_.book.reject(orderId, RejectReason::unreachable);
+        ctx_.book.reject(order.id, RejectReason::unreachable);
         return DispatchResult::rejected;
     }
 
-    std::vector<Candidate> candidates;
+    // UN solo plazo para todo el pedido (filtro, ronda de cercanos y ronda del resto): quoteTimeoutMs es el
+    // tiempo REAL maximo que espera el dispatcher, no un plazo por etapa.
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(std::clamp<std::int64_t>(quoteTimeoutMs_, 0, kMaxWaitMs));
+
+    std::vector<FleetMember> available;
     for (CourierActor* actor : activeCouriers()) {
-        const Courier view = actor->snapshot();
+        Courier view = actor->snapshot();
         if (view.state == CourierState::brokenDown || view.state == CourierState::onBreak ||
             !hasRoom(view)) {
             continue;
         }
+        available.push_back(FleetMember{actor, std::move(view)});
+    }
+    if (available.empty()) {
+        return DispatchResult::noRoom;
+    }
+
+    // Aplicacion 10: primero se cotiza a los que llegan al restaurante dentro del radio. Si nadie
+    // queda dentro (o no hay tabla) se cotiza a toda la flota disponible, y si los cercanos no pueden
+    // tomar el pedido se prueba despues con el resto: el filtro nunca genera un rechazo nuevo.
+    std::vector<FleetMember> nearby;
+    std::vector<FleetMember> others;
+    splitByRadius(order, available, nearby, others, deadline);
+    const DispatchResult first = quoteRound(order, nearby, deadline);
+    if (others.empty() || first == DispatchResult::assigned || first == DispatchResult::rejected) {
+        return first;
+    }
+    if (first == DispatchResult::retryLater || std::chrono::steady_clock::now() >= deadline) {
+        return DispatchResult::retryLater;  // sin plazo para otra ronda: se reintenta despues
+    }
+    const DispatchResult second = quoteRound(order, others, deadline);
+    if (second == DispatchResult::assigned || second == DispatchResult::rejected) {
+        return second;
+    }
+    if (first == DispatchResult::retryLater || second == DispatchResult::retryLater) {
+        return DispatchResult::retryLater;
+    }
+    return first == DispatchResult::unquotable && second == DispatchResult::unquotable
+               ? DispatchResult::unquotable
+               : DispatchResult::noRoom;
+}
+
+void Dispatcher::splitByRadius(const Order& order, const std::vector<FleetMember>& available,
+                               std::vector<FleetMember>& nearby, std::vector<FleetMember>& others,
+                               std::chrono::steady_clock::time_point deadline) {
+    const std::shared_ptr<const accel::TravelTimeTable> table =
+        ctx_.travelTimes != nullptr ? ctx_.travelTimes->get() : nullptr;
+    const NodeIndex restaurant = ctx_.graph.indexOf(order.pickupNode);
+    if (table == nullptr || candidateRadiusMs_ <= 0 || table->nodeCount() != ctx_.graph.nodeCount() ||
+        restaurant == kNoNode) {
+        nearby = available;
+        return;
+    }
+    accel::FleetColumns columns;
+    columns.node.reserve(available.size());
+    columns.available.reserve(available.size());
+    for (const FleetMember& member : available) {
+        const NodeIndex node = ctx_.graph.indexOf(currentNode(member.view));
+        const bool known = node != kNoNode && node < table->nodeCount();
+        columns.node.push_back(known ? static_cast<std::int32_t>(node) : 0);
+        columns.available.push_back(known ? 1 : 0);  // sin nodo conocido no se lee la tabla: queda para "others"
+    }
+    const std::int32_t maxTravelMs = static_cast<std::int32_t>(
+        std::min<std::int64_t>(candidateRadiusMs_, accel::kUnreachableMs - 1));
+    std::vector<std::int32_t> candidates;
+    try {
+        candidates = filter_.filter(table, std::move(columns), static_cast<std::int32_t>(restaurant), maxTravelMs,
+                                    remainingMs(deadline));
+    } catch (const std::exception&) {
+        nearby = available;  // el filtro es solo una optimizacion: ante un fallo se cotiza a todos
+        return;
+    }
+    if (candidates.empty()) {
+        nearby = available;  // nadie dentro del radio: toda la flota
+        return;
+    }
+    std::size_t nextCandidate = 0;
+    for (std::size_t courier = 0; courier < available.size(); ++courier) {
+        if (nextCandidate < candidates.size() && static_cast<std::size_t>(candidates[nextCandidate]) == courier) {
+            nearby.push_back(available[courier]);
+            ++nextCandidate;
+        } else {
+            others.push_back(available[courier]);
+        }
+    }
+}
+
+Dispatcher::DispatchResult Dispatcher::quoteRound(const Order& order, const std::vector<FleetMember>& members,
+                                                  std::chrono::steady_clock::time_point deadline) {
+    const OrderId orderId = order.id;
+
+    std::vector<Candidate> candidates;
+    for (const FleetMember& member : members) {
         candidates.push_back(Candidate{
-            actor, pool_.submit([this, view, order](Router& router) {
+            member.actor, pool_.submit([this, view = member.view, order](Router& router) {
                 return quote_(router, ctx_.graph, view, order);
             })});
     }
@@ -164,9 +257,6 @@ Dispatcher::DispatchResult Dispatcher::dispatchOne(const Order& order) {
         requested_ += static_cast<std::int64_t>(candidates.size());
     }
 
-    const auto deadline =
-        std::chrono::steady_clock::now() +
-        std::chrono::milliseconds(std::clamp<std::int64_t>(quoteTimeoutMs_, 0, kMaxWaitMs));
 
     std::vector<std::pair<std::int64_t, CourierActor*>> ranked;
     std::int64_t lateNow = 0;

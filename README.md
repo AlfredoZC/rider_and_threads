@@ -388,6 +388,26 @@ de la ciudad real de 25 a 3.741 nodos):
 ./delivery_sim ../config/ciudad.json --headless --bench r.csv --apps apsp_floyd,apsp_dijkstra --reps 2 --force
 ```
 
+### Aplicación 10: filtrar couriers candidatos (filter / compactación)
+
+Antes de cotizar un pedido, el `Dispatcher` filtra la flota con `accel::CandidateFilter` (`src/accel/CandidateFilter.h`):
+un courier es candidato si está disponible (no averiado, no en descanso, con lugar en la bolsa) y la tabla de
+tiempos de la aplicación 03 dice que llega al restaurante en a lo sumo el radio (`--candidate-radius-ms N`, por
+defecto 600000 = 10 min; 0 lo apaga). El predicado es uno solo para CPU y GPU (`src/accel/CandidatePredicate.h`). Con la
+tabla publicada se pide el filtro al `GpuWorker` (tabla residente en el device, lista privada por bloque en memoria
+compartida y un atómico global por bloque; plazo `quoteTimeoutMs` en tiempo real) y, si no hay GPU, falla o vence, se
+filtra en CPU. Se cotiza primero a los cercanos; si nadie queda dentro del radio, o si los cercanos no pueden tomar
+el pedido, se cotiza al resto: el filtro nunca genera un rechazo nuevo, y la decisión final sigue pasando por
+`reserve()`. Al cerrar escribe en stderr `[gpu] filtro de candidatos: X en GPU, Y en CPU`.
+
+Bench (`candidate_filter`: cpu1, cpuN, gpu_kernel, gpu_e2e; `candidate_filter_naive`: lo mismo con un atómico global por
+candidato, para medir la contención; flotas de 100 a 200.000 couriers en nodos reales; `gpu_e2e` incluye copiar la
+tabla de 56 MB):
+
+```bash
+./delivery_sim ../config/ciudad.json --headless --bench r.csv --apps candidate_filter,candidate_filter_naive --reps 2 --force
+```
+
 ## 3. Entrada y salida
 
 - **Entrada:** archivo JSON con el formato de la sección 5 del enunciado (`map`, `nodes`, `streets`,

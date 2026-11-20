@@ -13,6 +13,7 @@
 #include "Config.h"
 #include "CourierActor.h"
 #include "Fleet.h"
+#include "accel/CandidateFilter.h"
 #include "Quote.h"
 #include "QuotePool.h"
 #include "SimContext.h"
@@ -34,6 +35,15 @@ public:
 
     void setQuoteFunction(QuoteFn fn) { quote_ = std::move(fn); }
 
+    // Radio del filtro de candidatos (aplicacion 10): antes de cotizar un pedido se cotiza primero a los
+    // couriers que llegan al restaurante en a lo sumo este tiempo segun la tabla de tiempos; 0 lo apaga.
+    // Por defecto 10 minutos: a la velocidad de los couriers cubre de sobra la zona de un restaurante, asi
+    // que el filtro solo deja de lado a los que estan muy lejos.
+    static constexpr std::int64_t kDefaultCandidateRadiusMs = 10LL * 60 * 1000;
+    void setCandidateRadiusMs(std::int64_t radiusMs) { candidateRadiusMs_ = radiusMs; }
+    std::int64_t candidateRadiusMs() const { return candidateRadiusMs_; }
+    const accel::CandidateFilter& candidateFilter() const { return filter_; }
+
     std::int64_t quotesRequested() const;
     std::size_t quoteWorkers() const { return pool_.workers(); }
     std::int64_t quotesLate() const;
@@ -45,7 +55,16 @@ private:
     };
 
     enum class DispatchResult { assigned, rejected, noRoom, retryLater, unquotable };
+    struct FleetMember {
+        CourierActor* actor;
+        Courier view;
+    };
     DispatchResult dispatchOne(const Order& order);
+    DispatchResult quoteRound(const Order& order, const std::vector<FleetMember>& members,
+                             std::chrono::steady_clock::time_point deadline);
+    void splitByRadius(const Order& order, const std::vector<FleetMember>& available,
+                       std::vector<FleetMember>& nearby, std::vector<FleetMember>& others,
+                       std::chrono::steady_clock::time_point deadline);
     void spawnIfNeeded(std::size_t waiting);
     void sweepLateQuotes();
     bool stopped() const;
@@ -71,4 +90,6 @@ private:
     bool stopRequested_ = false;
     std::int64_t requested_ = 0;
     std::int64_t late_ = 0;
+    std::int64_t candidateRadiusMs_ = kDefaultCandidateRadiusMs;
+    accel::CandidateFilter filter_;
 };

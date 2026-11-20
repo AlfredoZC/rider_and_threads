@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <atomic>
 #include <chrono>
@@ -65,6 +66,7 @@ struct Arguments {
     accel::BackendChoice backend = accel::BackendChoice::automatic;
     std::string snapshotPath;  // --snapshot: PNG del ultimo cuadro dibujado
     std::string layers = "heat";  // --layers none|heat|coverage|both: capas visibles al empezar
+    std::int64_t candidateRadiusMs = Dispatcher::kDefaultCandidateRadiusMs;
 };
 
 bool parseArguments(int argc, char** argv, Arguments& args) {
@@ -72,6 +74,7 @@ bool parseArguments(int argc, char** argv, Arguments& args) {
         std::cerr << "Uso: " << argv[0]
                   << " <config.json> [--log <path>] [--no-window | --headless]\n"
                   << "       [--backend cpu|gpu|auto] [--snapshot <png>] [--layers none|heat|coverage|both]\n"
+                  << "       [--candidate-radius-ms N]\n"
                   << "  --no-window  sin ventana, pero carga la imagen y dibuja cada cuadro\n"
                   << "  --headless   sin imagen, sin dibujo ni highgui; espera bloqueado\n"
                   << "  --backend    cpu | gpu | auto (por defecto): auto usa la GPU si esta lista\n"
@@ -110,6 +113,14 @@ bool parseArguments(int argc, char** argv, Arguments& args) {
         } else if (flag == "--snapshot") {
             std::cerr << "Error: --snapshot necesita una ruta\n";
             return false;
+        } else if (flag == "--candidate-radius-ms" && i + 1 < argc) {
+            char* end = nullptr;
+            const long long value = std::strtoll(argv[++i], &end, 10);
+            if (end == argv[i] || *end != 0 || value < 0) {
+                std::cerr << "Error: --candidate-radius-ms necesita un entero >= 0 (0 apaga el filtro)\n";
+                return false;
+            }
+            args.candidateRadiusMs = value;
         } else if (flag == "--log" && i + 1 < argc) {
             args.logPath = argv[++i];
         } else if (flag == "--log") {
@@ -593,6 +604,7 @@ int main(int argc, char** argv) {
         fleet.addAndStart(std::move(actor));
     }
     Dispatcher dispatcher(cfg, ctx, fleet);
+    dispatcher.setCandidateRadiusMs(args.candidateRadiusMs);
     std::thread dispatcherThread(&Dispatcher::run, &dispatcher);
 
     std::thread generatorThread(&OrderGenerator::run, &generator);
@@ -726,6 +738,8 @@ int main(int argc, char** argv) {
 
     dispatcher.requestStop();
     dispatcherThread.join();
+    std::cerr << "[gpu] filtro de candidatos: " << dispatcher.candidateFilter().gpuFilters() << " en GPU, "
+              << dispatcher.candidateFilter().cpuFilters() << " en CPU" << std::endl;
 
     for (auto& entry : restaurants) {
         entry.second->stop();
