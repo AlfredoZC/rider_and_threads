@@ -30,6 +30,7 @@
 #include "Summary.h"
 #include "CityGraph.h"
 #include "SimContext.h"
+#include "accel/GpuInfo.h"
 
 namespace {
 
@@ -313,6 +314,9 @@ int main(int argc, char** argv) {
     KitchenScheduler kitchen(restaurantsInOrder, clock, *log);
 
     const SimContext ctx{graph, clock, *log, book, restaurants};
+
+    // Backend GPU: despues de los errores de arranque posibles, antes del primer hilo.
+    std::cerr << accel::describe(accel::gpuInfo()) << std::endl;
 
     Fleet fleet(cfg, ctx);
     for (int i = 0; i < cfg.couriers; ++i) {

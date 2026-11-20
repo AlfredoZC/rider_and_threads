@@ -36,7 +36,7 @@ Versiones usadas durante el desarrollo (Ubuntu 24.04.1 LTS sobre WSL2):
 | Dependencia | Versión usada | Mínimo exigido | Uso |
 |-------------|---------------|----------------|-----|
 | g++ | 13.3.0 | 7 | Compilador C++17 |
-| CMake | 3.28.3 | 3.11 | Generación del build |
+| CMake | 3.28.3 | 3.11 (3.18 con `USE_CUDA`) | Generación del build |
 | GNU Make | 4.3 | 4.1 | Build |
 | OpenCV | 4.6.0 | 4.1 | **Solo** la ventana (dibujo e imagen de fondo) |
 | nlohmann/json | 3.11.3 | — | Lectura de la configuración y escritura del log. Incluida en `third_party/` |
@@ -84,6 +84,20 @@ mkdir build-asan && cd build-asan && cmake -DENABLE_ASAN=ON .. && make   # Addre
 > setarch "$(uname -m)" -R ./delivery_sim ../config/equipetrol.json   # desactiva ASLR solo para esta ejecución
 > sudo sysctl vm.mmap_rnd_bits=28                                     # o: reduce la aleatorización del sistema
 > ```
+
+### Compilación con CUDA (opcional)
+
+El backend GPU es opcional y viene apagado: `cmake .. && make` compila la versión solo CPU, sin necesitar
+CUDA. Para incluirlo (requiere CMake >= 3.18 y CUDA Toolkit >= 11.8, por sm_89; no se combina con TSan/ASan, que se corren sobre el build CPU):
+
+```bash
+mkdir build-cuda && cd build-cuda
+cmake -DUSE_CUDA=ON -DCMAKE_BUILD_TYPE=Release .. && make
+```
+
+Por defecto se generan las arquitecturas `75;89` (T4 de Colab y RTX 4050); se pueden cambiar con
+`-DCMAKE_CUDA_ARCHITECTURES=...`. Al arrancar, el programa imprime en `stderr` una línea con el backend
+detectado (`Backend: GPU CUDA "..."` o `Backend: CPU (...)`); `stdout` no cambia.
 
 La simulación termina al cumplirse `simulation.durationS` segundos simulados, o al recibir `SIGINT` (Ctrl-C)
 o `SIGTERM`. En ambos casos imprime el resumen y sale con código 0.
