@@ -39,6 +39,11 @@ struct ReinforcementConfig {
     int threshold = 0;
     std::int64_t idleMs = 0;
 };
+struct KitchenConfig {
+    bool enabled = false;
+    std::int64_t pauseEveryMs = 0;
+    std::int64_t pauseMs = 0;
+};
 struct Config {
     std::filesystem::path imagePath;
     std::string attribution;
@@ -52,6 +57,8 @@ struct Config {
     int bagCapacity = 0;
     double speedKmh = 0.0;
     std::string startNode;
+    int breakAfterDeliveries = 0;
+    std::int64_t breakMs = 0;
 
     std::int64_t meanIntervalMs = 0;
     int burstMax = 0;
@@ -67,6 +74,10 @@ struct Config {
     double timeScale = 1.0;
 
     ReinforcementConfig reinforcements;
+
+    double urgentProbability = 0.0;
+    std::int64_t agingMs = 0;
+    KitchenConfig kitchen;
 };
 
 class ConfigError : public std::runtime_error {

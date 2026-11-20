@@ -9520,7 +9520,7 @@
       "id": "r0",
       "name": "Burger King",
       "node": "n15",
-      "pickupSlots": 2,
+      "pickupSlots": 1,
       "prepTimeMs": [
         60000,
         240000
@@ -9540,7 +9540,7 @@
       "id": "r2",
       "name": "Fazenda",
       "node": "n545",
-      "pickupSlots": 2,
+      "pickupSlots": 1,
       "prepTimeMs": [
         60000,
         240000
@@ -9560,7 +9560,7 @@
       "id": "r4",
       "name": "La Palette",
       "node": "n464",
-      "pickupSlots": 2,
+      "pickupSlots": 1,
       "prepTimeMs": [
         60000,
         240000
@@ -9578,16 +9578,20 @@
     }
   ],
   "fleet": {
-    "couriers": 2,
+    "couriers": 3,
     "bagCapacity": 3,
     "speedKmh": 30,
-    "startNode": "n311"
+    "startNode": "n311",
+    "breakAfterDeliveries": 2,
+    "breakMs": 600000
   },
   "orders": {
     "meanIntervalMs": 20000,
     "burstMax": 12,
     "maxPending": 50,
-    "seed": 42
+    "seed": 42,
+    "urgentProbability": 0.3,
+    "agingMs": 300000
   },
   "dispatch": {
     "quoteTimeoutMs": 200,
@@ -9601,8 +9605,12 @@
     "timeScale": 60
   },
   "reinforcements": {
-    "max": 4,
+    "max": 0,
     "threshold": 5,
     "idleMs": 300000
+  },
+  "kitchen": {
+    "pauseEveryMs": 900000,
+    "pauseMs": 240000
   }
 }

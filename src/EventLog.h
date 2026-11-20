@@ -19,7 +19,11 @@ constexpr const char *kCourierBreakdown = "courierBreakdown";
 constexpr const char *kCourierJoined = "courierJoined";
 constexpr const char *kCourierRetired = "courierRetired";
 constexpr const char *kOrderReassigned = "orderReassigned";
+constexpr const char *kCourierBreakStarted = "courierBreakStarted";
+constexpr const char *kCourierBreakEnded = "courierBreakEnded";
 constexpr const char *kSimulationStopping = "simulationStopping";
+constexpr const char *kRestaurantPaused = "restaurantPaused";
+constexpr const char *kRestaurantResumed = "restaurantResumed";
 }
 
 struct Event {
@@ -31,6 +35,7 @@ struct Event {
   std::string to;
 
   std::string reason;
+  int urgent = -1;
 };
 
 class EventLog {
@@ -38,8 +43,12 @@ public:
   EventLog(const std::string &path, const SimClock &clock);
 
   std::int64_t write(const Event &event);
+  // Escribe con un t explicito (instante exacto del calendario de pausas o de la entrada en fila).
+  std::int64_t write(const Event &event, std::int64_t t);
 
 private:
+  std::int64_t writeAt(const Event &event, const std::int64_t *explicitT);
+
   const SimClock &clock_;
   std::ofstream out_;
   std::mutex mutex_;

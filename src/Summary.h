@@ -13,4 +13,6 @@ std::string buildSummary(const OrderStats& stats, std::int64_t breakdowns,
 std::string buildSummary(const OrderStats& stats, std::int64_t breakdowns,
                          const std::vector<CourierActor*>& fleet,
                          std::int64_t reinforcementsJoined = 0,
-                         std::int64_t reinforcementsRetired = 0);
+                         std::int64_t reinforcementsRetired = 0,
+                         std::int64_t pauses = 0,
+                         std::int64_t pickupsDelayedByPause = 0);

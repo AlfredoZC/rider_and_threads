@@ -34,6 +34,7 @@ struct Order {
     RejectReason rejectReason = RejectReason::none;
     CourierId assignedCourier = kNoCourier;
     bool reassigned = false;
+    bool urgent = false;
 
     std::int64_t createdMs = kNoTime;
     std::int64_t prepMs = 0;

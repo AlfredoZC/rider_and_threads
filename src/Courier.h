@@ -13,6 +13,7 @@ enum class CourierState {
     atRestaurant,
     toDropoff,
     brokenDown,
+    onBreak,
 };
 
 struct Courier {
@@ -22,6 +23,7 @@ struct Courier {
     std::vector<OrderId> bag;
     int bagCapacity = 0;
     int delivered = 0;
+    int breaks = 0;
 
     std::string fromNode;
     std::string toNode;
@@ -41,6 +43,7 @@ inline const char* toString(CourierState s) {
         case CourierState::atRestaurant: return "atRestaurant";
         case CourierState::toDropoff:    return "toDropoff";
         case CourierState::brokenDown:   return "brokenDown";
+        case CourierState::onBreak:      return "onBreak";
     }
     return "unknown";
 }

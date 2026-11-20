@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <vector>
 #include <chrono>
+#include <unordered_set>
 #include <condition_variable>
 
 #include "EventLog.h"
@@ -22,6 +23,9 @@ struct OrderStats {
     std::int64_t pending = 0;
     std::int64_t avgDeliveryMs = 0;
     std::int64_t maxDeliveryMs = 0;
+    std::int64_t urgentCreated = 0;
+    std::int64_t urgentDelivered = 0;
+    std::int64_t avgUrgentDeliveryMs = 0;
 };
 
 class OrderBook {
@@ -37,11 +41,25 @@ public:
     bool reject(OrderId id, RejectReason reason);
 
     bool assign(OrderId id, CourierId courier);
+    // Como assign, pero si el pedido ya vencio (now - createdMs > acceptTimeoutMs) lo
+    // rechaza con noCourier bajo el mismo candado y devuelve expired: nunca queda un
+    // orderAssigned fuera de plazo.
+    enum class AssignResult { assigned, expired, failed };
+    AssignResult assignUnlessExpired(OrderId id, CourierId courier,
+                                     std::int64_t acceptTimeoutMs);
     bool pickedUp(OrderId id, CourierId courier);
     bool delivered(OrderId id, CourierId courier);
     bool waitForUnassigned(std::chrono::milliseconds timeout);
     std::uint64_t workVersion() const;
     bool waitForChange(std::uint64_t& observed, std::chrono::milliseconds timeout);
+    bool waitForChange(std::uint64_t& observed,
+                       std::chrono::steady_clock::time_point deadline);
+    std::optional<Order> pickNextUnassigned(std::int64_t agingMs,
+                                            const std::unordered_set<OrderId>& skip) const;
+    std::int64_t rejectExpired(std::int64_t acceptTimeoutMs);
+    std::optional<std::int64_t> nextDeadlineSimMs(std::int64_t acceptTimeoutMs,
+                                                  std::int64_t agingMs) const;
+    std::size_t waitingCount() const;
     void notifyCapacityChanged();
     void stopWaiting();
     bool unassign(OrderId id, bool countAsReassigned);
@@ -61,6 +79,7 @@ public:
 
 private:
     bool setState(Order& order, OrderState to);
+    bool assignLocked(OrderId id, CourierId courier);
 
     const std::size_t maxPending_;
     const SimClock& clock_;
@@ -75,4 +94,5 @@ private:
     std::int64_t markedPending_ = 0;
     OrderStats stats_;
     std::int64_t deliverySumMs_ = 0;
+    std::int64_t urgentDeliverySumMs_ = 0;
 };

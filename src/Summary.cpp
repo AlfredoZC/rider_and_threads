@@ -3,7 +3,9 @@
 std::string buildSummary(const OrderStats& stats, std::int64_t breakdowns,
                          const std::vector<CourierActor*>& fleet,
                          std::int64_t reinforcementsJoined,
-                         std::int64_t reinforcementsRetired) {
+                         std::int64_t reinforcementsRetired,
+                         std::int64_t pauses,
+                         std::int64_t pickupsDelayedByPause) {
     std::string out;
     out.reserve(256);
     out += "{\"created\":" + std::to_string(stats.created);
@@ -16,6 +18,11 @@ std::string buildSummary(const OrderStats& stats, std::int64_t breakdowns,
     out += ",\"maxDeliveryMs\":" + std::to_string(stats.maxDeliveryMs);
     out += ",\"reinforcementsJoined\":" + std::to_string(reinforcementsJoined);
     out += ",\"reinforcementsRetired\":" + std::to_string(reinforcementsRetired);
+    out += ",\"urgentCreated\":" + std::to_string(stats.urgentCreated);
+    out += ",\"urgentDelivered\":" + std::to_string(stats.urgentDelivered);
+    out += ",\"avgUrgentDeliveryMs\":" + std::to_string(stats.avgUrgentDeliveryMs);
+    out += ",\"pauses\":" + std::to_string(pauses);
+    out += ",\"pickupsDelayedByPause\":" + std::to_string(pickupsDelayedByPause);
 
     out += ",\"deliveredPerCourier\":{";
     bool first = true;
@@ -27,7 +34,22 @@ std::string buildSummary(const OrderStats& stats, std::int64_t breakdowns,
         first = false;
         out += "\"" + courierLabel(view.id) + "\":" + std::to_string(view.delivered);
     }
-    out += "}}";
+    out += "}";
+
+    std::int64_t breaks = 0;
+    std::string perCourier;
+    first = true;
+    for (const CourierActor* actor : fleet) {
+        const Courier view = actor->snapshot();
+        breaks += view.breaks;
+        if (!first) {
+            perCourier += ',';
+        }
+        first = false;
+        perCourier += "\"" + courierLabel(view.id) + "\":" + std::to_string(view.breaks);
+    }
+    out += ",\"breaks\":" + std::to_string(breaks);
+    out += ",\"breaksPerCourier\":{" + perCourier + "}}";
     return out;
 }
 

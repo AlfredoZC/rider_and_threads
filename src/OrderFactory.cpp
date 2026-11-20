@@ -3,6 +3,7 @@
 OrderFactory::OrderFactory(const Config& cfg, std::uint32_t seed)
     : cfg_(cfg),
       rng_(seed),
+      urgentRng_(seed ^ 0x85ebca6bu),
       restaurantPick_(0, cfg.restaurants.size() - 1),
       nodePick_(0, cfg.nodes.size() - 1) {}
 
@@ -24,5 +25,7 @@ Order OrderFactory::create(std::int64_t nowMs) {
     order.state = OrderState::created;
     order.createdMs = nowMs;
     order.prepMs = prep(rng_);
+    std::uniform_real_distribution<double> urgentDraw(0.0, 1.0);
+    order.urgent = urgentDraw(urgentRng_) < cfg_.urgentProbability;
     return order;
 }

@@ -44,6 +44,8 @@ private:
     int maxReinforcements_ = 0;
     int threshold_ = 0;
     std::int64_t idleMs_ = 0;
+    int breakAfterDeliveries_ = 0;
+    std::int64_t breakMs_ = 0;
     std::string startNode_;
     int bagCapacity_ = 0;
     double breakdownProbability_ = 0.0;
