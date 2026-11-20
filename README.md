@@ -279,6 +279,22 @@ Código: `src/accel/OpenOrders.{h,cpp}`, `src/accel/cuda/OpenOrders.cu`.
 ./delivery_sim ../config/ciudad.json --headless --bench o.csv --apps orders_in_progress --reps 2
 ```
 
+#### Aplicación 12: percentiles p50, p90 y p99 del tiempo de entrega con radix sort (`delivery_percentiles`)
+
+Para tener percentiles exactos se ordenan los tiempos de entrega con un radix sort LSD de 1 bit por pasada
+(solo los bits del máximo): cada pasada marca los que tienen el bit en 0, hace un scan exclusivo de las marcas
+(es el scan inclusivo de la aplicación 09, `src/accel/cuda/Scan.cu`, menos la propia marca) y reubica de forma
+estable. El percentil es el de rango más cercano, `(p·N+99)/100 − 1` en enteros. La CPU de N hilos cuenta los
+ceros por franja con `ThreadPool::parallelFor`, hace un scan de las franjas y reubica cada una por su cuenta.
+Dentro del programa: al terminar la simulación, `main` pide los percentiles de los pedidos entregados al
+`GpuWorker` (respaldo CPU) e imprime en stderr `[estadisticas] percentiles de entrega: p50 X min, p90 Y min,
+p99 Z min (backend=...)`; stdout no cambia. Código: `src/accel/DeliveryPercentiles.{h,cpp}`,
+`src/accel/cuda/DeliveryPercentiles.cu`.
+
+```bash
+./delivery_sim ../config/ciudad.json --headless --bench p.csv --apps delivery_percentiles --reps 2
+```
+
 ## 3. Entrada y salida
 
 - **Entrada:** archivo JSON con el formato de la sección 5 del enunciado (`map`, `nodes`, `streets`,

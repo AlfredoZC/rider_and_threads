@@ -17,8 +17,8 @@ std::int32_t clampToInt32(std::int64_t timeMs) {
         timeMs, std::numeric_limits<std::int32_t>::min(), std::numeric_limits<std::int32_t>::max()));
 }
 
-// Franja a la que pertenece el trozo que empieza en `chunkBegin`: parallelFor reparte con
-// chunkRange(itemCount, threads, parte) y los trozos no vacios tienen inicios distintos.
+}  // namespace
+
 std::size_t stripeOfChunk(std::size_t itemCount, std::size_t stripeCount, std::size_t chunkBegin) {
     for (std::size_t stripe = 0; stripe < stripeCount; ++stripe) {
         const Range range = chunkRange(itemCount, stripeCount, stripe);
@@ -28,8 +28,6 @@ std::size_t stripeOfChunk(std::size_t itemCount, std::size_t stripeCount, std::s
     }
     throw std::logic_error("stripeOfChunk: trozo desconocido");
 }
-
-}  // namespace
 
 OrderEvents buildOrderEvents(const std::vector<OrderLifetime>& orders) {
     struct Event {

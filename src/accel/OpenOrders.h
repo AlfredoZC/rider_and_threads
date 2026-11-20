@@ -89,6 +89,11 @@ inline unsigned long long peakKey(std::int32_t openOrders, std::uint32_t event) 
 // Pensada para correr DENTRO de una tarea del GpuWorker.
 std::string openOrdersGpu(const std::vector<std::int32_t>& change, OpenOrdersResult& result);
 
+// Franja a la que pertenece el trozo que empieza en `chunkBegin` cuando ThreadPool::parallelFor reparte
+// `itemCount` elementos en `stripeCount` trozos (chunkRange): los trozos no vacios tienen inicios distintos.
+// Lanza std::logic_error si no es el inicio de ningun trozo.
+std::size_t stripeOfChunk(std::size_t itemCount, std::size_t stripeCount, std::size_t chunkBegin);
+
 // Convierte la clave del pico traida de la GPU al resultado (count > 0).
 void applyPeakKey(unsigned long long key, OpenOrdersResult& result);
 

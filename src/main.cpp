@@ -36,6 +36,7 @@
 #include "SimContext.h"
 #include "accel/Backend.h"
 #include "accel/DeliveryHistogram.h"
+#include "accel/DeliveryPercentiles.h"
 #include "accel/OpenOrders.h"
 #include "accel/GpuInfo.h"
 #include "bench/BenchCli.h"
@@ -566,6 +567,16 @@ int main(int argc, char** argv) {
         const accel::OpenOrdersSummary openOrders = accel::openOrdersSummary(lifetimes, backend.worker.get());
         std::cerr << accel::formatOpenOrders(openOrders.peakOpenOrders, openOrders.peakTimeMs, openOrders.openAtEnd,
                                              openOrders.usedGpu ? "gpu" : "cpu")
+                  << std::endl;
+    }
+
+    // Percentiles p50, p90 y p99 del tiempo de entrega (radix sort + rango mas cercano), tambien por el
+    // hilo de la GPU con respaldo CPU. Solo stderr.
+    {
+        const accel::DeliveryPercentilesSummary percentiles =
+            accel::deliveryPercentiles(book.deliveredTimesMs(), backend.worker.get());
+        std::cerr << accel::formatDeliveryPercentiles(percentiles.percentiles, percentiles.count,
+                                                      percentiles.usedGpu ? "gpu" : "cpu")
                   << std::endl;
     }
 
