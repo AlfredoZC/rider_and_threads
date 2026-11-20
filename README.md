@@ -370,6 +370,24 @@ ciudad N veces **alternando `--backend auto` y `--backend cpu`** con duración r
 tools/sim_compare.sh -b build/delivery_sim -n 3 -d 30 -m no-window -o sim_compare.csv   # -m headless | window
 ```
 
+### Aplicación 03: tabla de tiempos entre todos los pares (Floyd–Warshall por tiles)
+
+Al arrancar la simulación se calcula una sola vez la tabla `travelTimeMs[desde][hasta]` de las 3.741 intersecciones
+(`src/accel/TravelTimeTable.h`, 56 MB, inmutable, respeta el sentido de las calles). Si hay GPU sana se pide al
+`GpuWorker` (Floyd–Warshall por tiles de 32×32, en `src/accel/cuda/TravelTimeTable.cu`); si no, o si falla, se
+calcula en CPU con Dijkstra desde cada nodo en paralelo. Se publica en `SimContext::travelTimes` y, cuando está
+lista, `estimateDeliveryMsWithTable` (la cotización del dispatcher) lee dos celdas en vez de correr Dijkstra; hasta
+entonces todo sigue como antes. El movimiento de los couriers sigue usando `Router::shortestPath`. Al estar lista
+escribe en stderr `[gpu] tabla de tiempos lista: N nodos, backend X, T ms`. Un valor 0x3f3f3f3f ms (más de 12 días)
+significa "no hay camino" y los tiempos de una calle se saturan a int32.
+
+Bench (`apsp_floyd`: cpu1, cpuN, gpu_kernel, gpu_e2e; `apsp_dijkstra`: la mejor CPU, cpu1 y cpuN; tamaños = subgrafos
+de la ciudad real de 25 a 3.741 nodos):
+
+```bash
+./delivery_sim ../config/ciudad.json --headless --bench r.csv --apps apsp_floyd,apsp_dijkstra --reps 2 --force
+```
+
 ## 3. Entrada y salida
 
 - **Entrada:** archivo JSON con el formato de la sección 5 del enunciado (`map`, `nodes`, `streets`,

@@ -4,7 +4,18 @@
 #include <optional>
 #include <unordered_set>
 
+#include "accel/TravelTimeTable.h"
+
 namespace {
+// Cotizacion por defecto: usa la tabla de tiempos si ya esta publicada y Dijkstra si no.
+Dispatcher::QuoteFn defaultQuote(const SimContext& ctx) {
+    const accel::TravelTimeTableSlot* slot = ctx.travelTimes;
+    return [slot](Router& router, const CityGraph& graph, const Courier& courier, const Order& order) {
+        const std::shared_ptr<const accel::TravelTimeTable> table = slot != nullptr ? slot->get() : nullptr;
+        return estimateDeliveryMsWithTable(router, graph, courier, order, table.get());
+    };
+}
+
 // Piso del plazo de reintento: con quoteTimeoutMs = 0 no se debe girar sin dormir.
 constexpr std::int64_t kMinRetryMs = 50;
 constexpr std::int64_t kMaxWaitMs = 24LL * 3600 * 1000;  // evita now()+ms desbordado
@@ -17,7 +28,7 @@ Dispatcher::Dispatcher(const Config& cfg, const SimContext& ctx,
       quoteTimeoutMs_(cfg.quoteTimeoutMs),
       acceptTimeoutMs_(cfg.acceptTimeoutMs),
       agingMs_(cfg.agingMs),
-      quote_(estimateDeliveryMs),
+      quote_(defaultQuote(ctx)),
       router_(ctx.graph),
       pool_(ctx.graph, static_cast<unsigned>(cfg.couriers) +
                            static_cast<unsigned>(cfg.reinforcements.max)) {}
@@ -28,7 +39,7 @@ Dispatcher::Dispatcher(const Config& cfg, const SimContext& ctx, Fleet& fleet)
       quoteTimeoutMs_(cfg.quoteTimeoutMs),
       acceptTimeoutMs_(cfg.acceptTimeoutMs),
       agingMs_(cfg.agingMs),
-      quote_(estimateDeliveryMs),
+      quote_(defaultQuote(ctx)),
       router_(ctx.graph),
       pool_(ctx.graph, static_cast<unsigned>(cfg.couriers) +
                            static_cast<unsigned>(cfg.reinforcements.max)) {}

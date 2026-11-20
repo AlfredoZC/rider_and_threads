@@ -45,6 +45,7 @@
 #include "accel/DeliveryTimeline.h"
 #include "accel/OpenOrders.h"
 #include "accel/GpuInfo.h"
+#include "accel/TravelTimeTable.h"
 #include "bench/BenchCli.h"
 #include "bench/BenchMain.h"
 
@@ -575,7 +576,12 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    const SimContext ctx{graph, clock, *log, book, restaurants, backend.worker.get()};
+    accel::TravelTimeTableSlot travelTimes;
+    const SimContext ctx{graph, clock, *log, book, restaurants, backend.worker.get(), &travelTimes};
+    // Tabla de tiempos entre todos los pares: se calcula en segundo plano (GPU si esta sana, si no CPU);
+    // mientras no esta lista las cotizaciones siguen usando Dijkstra.
+    std::thread travelTimeBuilder(accel::computeAndPublishTravelTimeTable, std::cref(graph),
+                                  backend.worker.get(), std::ref(travelTimes));
 
     Fleet fleet(cfg, ctx);
     for (int i = 0; i < cfg.couriers; ++i) {
@@ -804,6 +810,7 @@ int main(int argc, char** argv) {
     std::cerr << heatService.hottestZone() << std::endl;
     std::cerr << coverageService.leastCoveredZone() << std::endl;
 
+    travelTimeBuilder.join();
     // Ya no queda ningun hilo que envie trabajo a la GPU: se apaga (resuelve lo pendiente y une).
     if (backend.worker) {
         backend.worker->stop();
