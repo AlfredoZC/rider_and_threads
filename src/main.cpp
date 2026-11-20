@@ -34,6 +34,7 @@
 #include "Summary.h"
 #include "CityGraph.h"
 #include "SimContext.h"
+#include "accel/Backend.h"
 #include "accel/GpuInfo.h"
 #include "bench/BenchCli.h"
 #include "bench/BenchMain.h"
@@ -51,14 +52,17 @@ struct Arguments {
     std::string logPath = "events.log";
     bool noWindow = false;
     bool headless = false;
+    accel::BackendChoice backend = accel::BackendChoice::automatic;
 };
 
 bool parseArguments(int argc, char** argv, Arguments& args) {
     if (argc < 2) {
         std::cerr << "Uso: " << argv[0]
                   << " <config.json> [--log <path>] [--no-window | --headless]\n"
+                  << "       [--backend cpu|gpu|auto]\n"
                   << "  --no-window  sin ventana, pero carga la imagen y dibuja cada cuadro\n"
-                  << "  --headless   sin imagen, sin dibujo ni highgui; espera bloqueado\n";
+                  << "  --headless   sin imagen, sin dibujo ni highgui; espera bloqueado\n"
+                  << "  --backend    cpu | gpu | auto (por defecto): auto usa la GPU si esta lista\n";
         return false;
     }
     args.configPath = argv[1];
@@ -68,6 +72,16 @@ bool parseArguments(int argc, char** argv, Arguments& args) {
             args.noWindow = true;
         } else if (flag == "--headless") {
             args.headless = true;
+        } else if (flag == "--backend" && i + 1 < argc) {
+            bool ok = false;
+            args.backend = accel::parseBackendChoice(argv[++i], ok);
+            if (!ok) {
+                std::cerr << "Error: --backend admite cpu, gpu o auto\n";
+                return false;
+            }
+        } else if (flag == "--backend") {
+            std::cerr << "Error: --backend necesita cpu, gpu o auto\n";
+            return false;
         } else if (flag == "--log" && i + 1 < argc) {
             args.logPath = argv[++i];
         } else if (flag == "--log") {
@@ -432,10 +446,15 @@ int main(int argc, char** argv) {
     }
     KitchenScheduler kitchen(restaurantsInOrder, clock, *log);
 
-    const SimContext ctx{graph, clock, *log, book, restaurants};
+    // Backend GPU: despues de los errores de arranque posibles, antes del primer hilo de la
+    // simulacion. El hilo dueño de la GPU se apaga mas abajo, DESPUES de los hilos que lo usan.
+    accel::BackendSelection backend = accel::selectBackend(args.backend);
+    std::cerr << backend.line << std::endl;
+    if (backend.failed) {
+        return 1;
+    }
 
-    // Backend GPU: despues de los errores de arranque posibles, antes del primer hilo.
-    std::cerr << accel::describe(accel::gpuInfo()) << std::endl;
+    const SimContext ctx{graph, clock, *log, book, restaurants, backend.worker.get()};
 
     Fleet fleet(cfg, ctx);
     for (int i = 0; i < cfg.couriers; ++i) {
@@ -522,6 +541,11 @@ int main(int argc, char** argv) {
 
     fleet.requestStopAll();
     fleet.joinAll();
+
+    // Ya no queda ningun hilo que envie trabajo a la GPU: se apaga (resuelve lo pendiente y une).
+    if (backend.worker) {
+        backend.worker->stop();
+    }
 
     book.markRemainingAsPending();
     const OrderStats stats = book.stats();

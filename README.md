@@ -68,6 +68,7 @@ cmake .. && make
 | `--log <path>` (opcional) | Escribe el log de eventos en `<path>` en vez de `events.log` |
 | `--no-window` (opcional) | Corre la simulación sin abrir la ventana. Ver más abajo |
 | `--headless` (opcional) | Corre sin ventana, sin imagen y sin dibujo; la espera es bloqueante. Ver más abajo |
+| `--backend` (opcional) | `cpu`, `gpu` o `auto` (por defecto) Elige el backend. Ver "Hilo dueño de la GPU" |
 
 Builds instrumentados:
 
@@ -99,6 +100,41 @@ cmake -DUSE_CUDA=ON -DCMAKE_BUILD_TYPE=Release .. && make
 Por defecto se generan las arquitecturas `75;89` (T4 de Colab y RTX 4050); se pueden cambiar con
 `-DCMAKE_CUDA_ARCHITECTURES=...`. Al arrancar, el programa imprime en `stderr` una línea con el backend
 detectado (`Backend: GPU CUDA "..."` o `Backend: CPU (...)`); `stdout` no cambia.
+
+### Hilo dueño de la GPU y `--backend`
+
+Con CUDA activo, **un único hilo es dueño de la GPU** (`src/accel/GpuWorker.{h,cpp}`). Los demás hilos
+le enviarán trabajo con `submit(fn)`, que encola la tarea (cola FIFO con `mutex` +
+`condition_variable`, sin sondeo ni sleeps) y devuelve un `std::future`; así los repartidores seguirán
+andando y la ventana refrescándose mientras corre un kernel. El contexto CUDA se crea en ese
+mismo hilo (`cudaSetDeviceFlags(BlockingSync)`, `cudaSetDevice(0)`, `cudaFree(0)` y una sonda:
+`computeMode` no prohibido y cc >= 7.5).
+
+**Estado actual:** esta entrega es la *infraestructura*: el worker, `--backend`, el puntero
+`SimContext::gpu` y el helper de plazo. Todavía **ningún** hilo de la simulación (dispatcher, fleet)
+envía trabajo: eso lo harán las aplicaciones GPU en las features siguientes.
+
+Plazo: `quoteTimeoutMs` es tiempo **real**. El que llama calcula UNA vez por ronda
+`deadline = accel::deadlineAfterMs(quoteTimeoutMs)` (recortado a [0, 24 h], como el Dispatcher) y espera
+cada future con `accel::waitUntilDeadline(future, deadline)`; así N candidatos comparten el plazo. Si
+vence, usa la CPU y descarta el future. `submit(fn, deadline)` acepta además un plazo por tarea: si al
+sacarla de la cola ya venció, no se ejecuta y su future lanza `GpuTaskExpiredError`. Las tareas deben
+capturar por valor o con `shared_ptr` (siguen vivas tras descartar el future), no esperar futures del
+mismo worker y no llamar a `stop()`.
+
+- `stop()` rechaza envíos nuevos (`GpuUnavailableError`), deja terminar la tarea en curso, resuelve con
+  excepción todas las tareas en cola y une el hilo. Se llama después de los hilos que lo usan.
+- Un error CUDA no recuperable (la tarea lanza `GpuFatalError`) deja el worker "no saludable" para
+  siempre: los `submit` siguientes fallan al instante y se usa el respaldo CPU.
+
+| `--backend` | Efecto |
+|-------------|--------|
+| `auto` (por defecto) | GPU si está disponible y saludable; si no, CPU (la línea de `stderr` dice por qué) |
+| `cpu` | No crea el worker ni toca CUDA, aunque el binario tenga CUDA: sirve para probar el respaldo CPU. En WSL no uses `CUDA_VISIBLE_DEVICES=""` (aborta en libcuda): usa `--backend cpu` |
+| `gpu` | Exige GPU: si no está disponible termina con error (código 1) |
+
+La línea `Backend: ...` de `stderr` indica cuál se usará. Decisiones y alternativas descartadas:
+[`docs/adr/0004-hilo-duenio-gpu.md`](docs/adr/0004-hilo-duenio-gpu.md). Prueba: `bash tests/run.sh gpu_worker`.
 
 La simulación termina al cumplirse `simulation.durationS` segundos simulados, o al recibir `SIGINT` (Ctrl-C)
 o `SIGTERM`. En ambos casos imprime el resumen y sale con código 0.
