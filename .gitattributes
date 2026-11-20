@@ -6,6 +6,7 @@
 *.py text eol=lf
 *.txt text eol=lf
 *.json text eol=lf
+*.osm text eol=lf
 *.ipynb text eol=lf
 *.md text eol=lf
 *.cmake text eol=lf

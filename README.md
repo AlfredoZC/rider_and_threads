@@ -173,10 +173,12 @@ no describen necesariamente la flota activa de `config/equipetrol.json`.
 ```
 CMakeLists.txt            build (target delivery_sim, opciones ENABLE_TSAN / ENABLE_ASAN)
 config/equipetrol.json    configuración oficial
+config/ciudad.json        ciudad grande para medir la GPU (ver docs/ciudad.md)
 config/tests/             escenarios de prueba (válidos e inválidos)
 data/equipetrol.png       imagen de OpenStreetMap usada de fondo
+data/ciudad.osm, .png     extracto OSM de la ciudad y su fondo dibujado (licencia en data/NOTICE.md)
 src/                      código fuente C++17
-tests/                    17 programas de prueba y run.sh, que los compila y ejecuta
+tests/                    programas de prueba y run.sh, que los compila y ejecuta
 docs/                     informe técnico y capturas
 third_party/nlohmann/     librería JSON (un solo header)
 tools/                    scripts de apoyo: validación del log, corrida de escenarios, extracción OSM
@@ -226,6 +228,21 @@ python3 tools/osm_extract.py data/equipetrol.osm config/equipetrol.json --all-st
 | Intersecciones y nodos de forma | 668 | 25 |
 | Segmentos de calle | 1027 (259 de un solo sentido) | 40 |
 | Restaurantes | 6 | 6 |
+
+### Ciudad grande (escala para la GPU)
+
+`config/ciudad.json` es la escala del segundo parcial: 3.741 intersecciones de Santa Cruz de la Sierra
+(una caja de ~4,9 × 5,4 km que contiene Equipetrol), 6.058 calles (2.040 de un solo sentido), 150
+restaurantes reales de OpenStreetMap y 2.000 couriers, con una tasa de pedidos que deja cientos
+pendientes. Tiene el mismo esquema que `config/equipetrol.json`. La consulta, el comando exacto y los
+valores elegidos están en [`docs/ciudad.md`](docs/ciudad.md); la decisión, en
+[`docs/adr/0002-escenario-ciudad.md`](docs/adr/0002-escenario-ciudad.md). Datos © OpenStreetMap
+contributors, ODbL ([`data/NOTICE.md`](data/NOTICE.md)). El código sigue bajo MIT; la MIT no cubre esos
+datos.
+
+```bash
+./build/delivery_sim config/ciudad.json --log ciudad.log
+```
 
 Decisiones del modelado:
 
