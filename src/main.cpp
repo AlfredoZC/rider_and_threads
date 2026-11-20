@@ -1,5 +1,7 @@
 #include <algorithm>
+#include <climits>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <atomic>
 #include <chrono>
@@ -37,6 +39,7 @@
 #include "accel/Backend.h"
 #include "accel/DeliveryHistogram.h"
 #include "accel/DeliveryPercentiles.h"
+#include "accel/DeliveryTimeline.h"
 #include "accel/OpenOrders.h"
 #include "accel/GpuInfo.h"
 #include "bench/BenchCli.h"
@@ -577,6 +580,36 @@ int main(int argc, char** argv) {
             accel::deliveryPercentiles(book.deliveredTimesMs(), backend.worker.get());
         std::cerr << accel::formatDeliveryPercentiles(percentiles.percentiles, percentiles.count,
                                                       percentiles.usedGpu ? "gpu" : "cpu")
+                  << std::endl;
+    }
+
+    // Linea de tiempo global de entregas: la lista de cada courier (ya ordenada por hora) se fusiona en la
+    // GPU con respaldo CPU y de ahi salen las entregas por hora simulada. Un courier sin entregas aporta una
+    // lista vacia. Solo stderr; la suma de las horas es `delivered` del resumen.
+    {
+        const std::vector<DeliveryEntry> entries = book.deliveries();
+        std::unordered_map<CourierId, std::size_t> listOfCourier;
+        const std::vector<CourierActor*> actors = fleet.allSnapshot();
+        for (std::size_t list = 0; list < actors.size(); ++list) {
+            listOfCourier.emplace(actors[list]->id(), list);
+        }
+        std::vector<std::vector<accel::DeliveryRecord>> perCourier(actors.size());
+        for (const DeliveryEntry& entry : entries) {  // llegan ordenadas por courier y hora
+            const auto found = listOfCourier.find(entry.courier);
+            if (found != listOfCourier.end()) {
+                perCourier[found->second].push_back({static_cast<std::int32_t>(std::clamp<std::int64_t>(entry.deliveredMs, 0, INT_MAX)),
+                                                     static_cast<std::int32_t>(std::min<OrderId>(entry.orderId, INT_MAX))});
+            }
+        }
+        std::vector<accel::DeliveryRecord> records;
+        std::vector<int> listStart{0};
+        for (const auto& list : perCourier) {
+            records.insert(records.end(), list.begin(), list.end());
+            listStart.push_back(static_cast<int>(records.size()));
+        }
+        const accel::DeliveryTimelineSummary timeline =
+            accel::deliveryTimelineSummary(records, listStart, backend.worker.get());
+        std::cerr << accel::formatDeliveriesPerHour(timeline.deliveriesPerHour, timeline.usedGpu ? "gpu" : "cpu")
                   << std::endl;
     }
 

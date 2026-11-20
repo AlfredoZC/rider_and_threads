@@ -295,6 +295,23 @@ p99 Z min (backend=...)`; stdout no cambia. Código: `src/accel/DeliveryPercenti
 ./delivery_sim ../config/ciudad.json --headless --bench p.csv --apps delivery_percentiles --reps 2
 ```
 
+#### Aplicación 11: línea de tiempo global de entregas (`delivery_timeline`)
+
+La lista de entregas de cada courier ya está ordenada por hora, así que en vez de reordenar todo se **fusionan**
+las listas de a pares en un árbol de ⌈log₂ L⌉ rondas. En paralelo se reparte la **salida** de cada ronda:
+cada hilo produce un tramo de posiciones y calcula con co-rank (búsqueda binaria) cuántos elementos salen de cada
+lista; la fusión es estable (en un empate va primero la lista de la izquierda) y la búsqueda del par salta los
+couriers sin entregas. En la GPU una ronda es un lanzamiento para todos los pares (4 salidas por hilo), y las
+entregas por hora salen de dos búsquedas binarias por hora, sin atómicos. Dentro del programa: al terminar la
+simulación, `main` arma una lista por courier con `OrderBook::deliveries()`, pide la fusión al `GpuWorker`
+(respaldo CPU) e imprime en stderr `[estadisticas] entregas por hora simulada: h0 N0, h1 N1, ...`; la suma
+coincide con `delivered` del resumen, que no cambia. Código: `src/accel/DeliveryTimeline.{h,cpp}`,
+`src/accel/cuda/DeliveryTimeline.cu`.
+
+```bash
+./delivery_sim ../config/ciudad.json --headless --bench t.csv --apps delivery_timeline --reps 2
+```
+
 ## 3. Entrada y salida
 
 - **Entrada:** archivo JSON con el formato de la sección 5 del enunciado (`map`, `nodes`, `streets`,

@@ -7,13 +7,8 @@
 #include <vector>
 
 #include "accel/GpuWorker.h"
+#include "accel/HostDevice.h"
 #include "accel/ThreadPool.h"
-
-#ifdef __CUDACC__
-#define ACCEL_HOST_DEVICE __host__ __device__
-#else
-#define ACCEL_HOST_DEVICE
-#endif
 
 namespace accel {
 

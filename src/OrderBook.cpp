@@ -502,3 +502,21 @@ std::vector<OrderSpan> OrderBook::orderSpans() const {
     }
     return spans;
 }
+
+std::vector<DeliveryEntry> OrderBook::deliveries() const {
+    const std::lock_guard<std::mutex> guard(mutex_);
+    std::vector<DeliveryEntry> entries;
+    entries.reserve(static_cast<std::size_t>(stats_.delivered));
+    for (const auto& entry : orders_) {
+        const Order& order = entry.second;
+        if (order.state == OrderState::delivered) {
+            entries.push_back({order.assignedCourier, order.deliveredMs, order.id});
+        }
+    }
+    std::sort(entries.begin(), entries.end(), [](const DeliveryEntry& left, const DeliveryEntry& right) {
+        if (left.courier != right.courier) return left.courier < right.courier;
+        if (left.deliveredMs != right.deliveredMs) return left.deliveredMs < right.deliveredMs;
+        return left.orderId < right.orderId;
+    });
+    return entries;
+}

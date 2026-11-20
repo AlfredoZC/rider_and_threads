@@ -34,6 +34,13 @@ struct OrderSpan {
     std::int64_t closedMs = kNoTime;
 };
 
+// Una entrega: quien la hizo, cuando (ms de simulacion) y que pedido.
+struct DeliveryEntry {
+    CourierId courier = kNoCourier;
+    std::int64_t deliveredMs = kNoTime;
+    OrderId orderId = kNoOrder;
+};
+
 class OrderBook {
 public:
     OrderBook(int maxPending, const SimClock& clock, EventLog& log);
@@ -88,6 +95,10 @@ public:
 
     // Creacion y cierre de cada pedido (en cualquier orden).
     std::vector<OrderSpan> orderSpans() const;
+
+    // Las entregas hechas, ordenadas por courier, hora de entrega y pedido (la lista de cada courier sale
+    // ya ordenada por hora).
+    std::vector<DeliveryEntry> deliveries() const;
 
 private:
     bool setState(Order& order, OrderState to);
