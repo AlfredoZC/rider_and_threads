@@ -520,3 +520,14 @@ std::vector<DeliveryEntry> OrderBook::deliveries() const {
     });
     return entries;
 }
+
+std::vector<std::string> OrderBook::dropoffNodesCreatedSince(std::int64_t sinceMs) const {
+    std::vector<std::string> dropoffNodes;
+    const std::lock_guard<std::mutex> guard(mutex_);
+    for (const auto& entry : orders_) {
+        if (entry.second.createdMs != kNoTime && entry.second.createdMs >= sinceMs) {
+            dropoffNodes.push_back(entry.second.dropoffNode);
+        }
+    }
+    return dropoffNodes;
+}

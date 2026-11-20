@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <vector>
 #include <chrono>
@@ -99,6 +100,10 @@ public:
     // Las entregas hechas, ordenadas por courier, hora de entrega y pedido (la lista de cada courier sale
     // ya ordenada por hora).
     std::vector<DeliveryEntry> deliveries() const;
+
+    // Nodos de entrega (cliente) de los pedidos creados en o despues de sinceMs (tiempo simulado), incluidos
+    // los rechazados: es demanda igual. Para el mapa de calor de la demanda.
+    std::vector<std::string> dropoffNodesCreatedSince(std::int64_t sinceMs) const;
 
 private:
     bool setState(Order& order, OrderState to);

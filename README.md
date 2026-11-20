@@ -312,6 +312,27 @@ coincide con `delivered` del resumen, que no cambia. Código: `src/accel/Deliver
 ./delivery_sim ../config/ciudad.json --headless --bench t.csv --apps delivery_timeline --reps 2
 ```
 
+### Aplicación 05: mapa de calor de la demanda (convolución 2D)
+
+Cuenta los pedidos creados en los últimos 10 minutos simulados por celda de una grilla de 128 × 128 sobre
+`map.bounds` (por el nodo del cliente) y los suaviza con un filtro gaussiano 7 × 7 (σ = 1,5 celdas, lo que sale
+de la grilla cuenta 0): `accel::smoothDemand` en `src/accel/DemandHeatmap.{h,cpp}`. Versiones: CPU de 1 hilo, CPU
+con N hilos (franjas de filas con `ThreadPool::parallelFor`) y GPU con un hilo por celda y el filtro en memoria
+constante (`src/accel/cuda/DemandHeatmap.cu`, kernel **principal**); la variante con tile de memoria compartida y
+halo (`DemandKernel::tiledHalo`) es opcional y se mide como `demand_heatmap_tiles`. Tolerancia GPU contra CPU:
+`|d| / (1 + |ref|) <= 1e-5` (la GPU fusiona `a*b+c` en una FMA).
+
+En la simulación, un hilo (`src/DemandHeat.*`) pide el suavizado cada ~2 s reales al `GpuWorker` (plazo real de
+1 s; si falla o vence, CPU); la ventana solo dibuja el último resultado listo y nunca espera. Tecla **H**:
+muestra/oculta la capa (con leyenda). Al terminar imprime en stderr `[estadisticas] zona mas caliente: celda
+(x,y) ~ lat,lon, valor V` (también con `--headless`). `--snapshot <png>` guarda el último cuadro dibujado (con
+`--no-window` o con ventana; no con `--headless`). El resumen oficial y el log no cambian.
+
+```bash
+./delivery_sim ../config/ciudad.json --headless --bench h.csv --apps demand_heatmap,demand_heatmap_tiles --sizes 128,1024 --reps 2 --force
+./delivery_sim ../config/ciudad.json --no-window --snapshot mapa_calor.png
+```
+
 ## 3. Entrada y salida
 
 - **Entrada:** archivo JSON con el formato de la sección 5 del enunciado (`map`, `nodes`, `streets`,
