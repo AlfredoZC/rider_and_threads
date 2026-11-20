@@ -77,6 +77,9 @@ public:
 
     OrderStats stats() const;
 
+    // Tiempo total (ms) de cada pedido entregado, en cualquier orden.
+    std::vector<std::int64_t> deliveredTimesMs() const;
+
 private:
     bool setState(Order& order, OrderState to);
     bool assignLocked(OrderId id, CourierId courier);

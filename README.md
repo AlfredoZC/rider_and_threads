@@ -246,6 +246,23 @@ Para agregar una aplicación: un archivo en `src/bench/` con una clase que hered
 un subgrafo conexo de la ciudad real con exactamente `n` nodos (BFS determinista desde un nodo de Equipetrol,
 con las calles y sus sentidos) para los tamaños de grafo.
 
+#### Aplicación 07: histograma de tiempos de entrega por minuto (`delivery_histogram`)
+
+Cuenta cuántas entregas tardaron cada minuto (barras 0..59 y una barra 60 que junta "60 min o más"; la suma
+de las barras es siempre la cantidad de entregas). En la GPU cada bloque cuenta en su copia del histograma en
+memoria compartida y al final la suma al global (privatización); la CPU de N hilos usa un histograma por trozo
+de `ThreadPool::parallelFor` y una suma final. Dentro del programa: al terminar la simulación, `main` pide el
+histograma de los pedidos entregados al `GpuWorker` (con respaldo en la CPU) e imprime en stderr una línea
+`[estadisticas] histograma de entrega (min): ...` con las barras no vacías; el resumen de stdout no cambia.
+Código: `src/accel/DeliveryHistogram.{h,cpp}`, `src/accel/cuda/DeliveryHistogram.cu`.
+
+```bash
+./delivery_sim ../config/ciudad.json --headless --bench h.csv --apps delivery_histogram,histogram_naive --reps 2
+```
+
+`histogram_naive` mide solo la GPU con un atómico global por entrega, para ver el costo de la contención
+frente a la versión privatizada. Tamaños por defecto: 1e3 a 1e7 tiempos sintéticos (log-normal, mediana 28 min).
+
 ## 3. Entrada y salida
 
 - **Entrada:** archivo JSON con el formato de la sección 5 del enunciado (`map`, `nodes`, `streets`,

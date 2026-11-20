@@ -472,3 +472,15 @@ OrderStats OrderBook::stats() const {
         stats_.urgentDelivered > 0 ? urgentDeliverySumMs_ / stats_.urgentDelivered : 0;
     return copy;
 }
+
+std::vector<std::int64_t> OrderBook::deliveredTimesMs() const {
+    const std::lock_guard<std::mutex> guard(mutex_);
+    std::vector<std::int64_t> times;
+    times.reserve(static_cast<std::size_t>(stats_.delivered));
+    for (const auto& entry : orders_) {
+        if (entry.second.state == OrderState::delivered) {
+            times.push_back(deliveryMs(entry.second));
+        }
+    }
+    return times;
+}

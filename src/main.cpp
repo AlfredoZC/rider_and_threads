@@ -35,6 +35,7 @@
 #include "CityGraph.h"
 #include "SimContext.h"
 #include "accel/Backend.h"
+#include "accel/DeliveryHistogram.h"
 #include "accel/GpuInfo.h"
 #include "bench/BenchCli.h"
 #include "bench/BenchMain.h"
@@ -541,6 +542,16 @@ int main(int argc, char** argv) {
 
     fleet.requestStopAll();
     fleet.joinAll();
+
+    // Estadistica extra (solo stderr, el resumen oficial de stdout no cambia): histograma de los
+    // tiempos de entrega por minuto, pedido al hilo de la GPU con respaldo en la CPU. Va antes de
+    // apagar el worker, con todos los hilos de la simulacion ya unidos.
+    {
+        const accel::DeliveryHistogramResult histogram =
+            accel::deliveryTimeHistogram(book.deliveredTimesMs(), backend.worker.get());
+        std::cerr << accel::formatDeliveryHistogram(histogram.bins, histogram.usedGpu ? "gpu" : "cpu")
+                  << std::endl;
+    }
 
     // Ya no queda ningun hilo que envie trabajo a la GPU: se apaga (resuelve lo pendiente y une).
     if (backend.worker) {
