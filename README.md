@@ -333,6 +333,28 @@ muestra/oculta la capa (con leyenda). Al terminar imprime en stderr `[estadistic
 ./delivery_sim ../config/ciudad.json --no-window --snapshot mapa_calor.png
 ```
 
+### Aplicación 06: campo de cobertura de la flota (stencil de 5 puntos, Jacobi)
+
+Sobre la grilla de 128 × 128 de `map.bounds`, las celdas con couriers son **fuentes fijas** (se cuentan con margen 1
+para que ninguna caiga en el borde), el contorno vale **0** fijo y cada celda libre pasa a ser el promedio de sus 4
+vecinas del barrido anterior (Jacobi, doble buffer). Todas las versiones hacen la misma cantidad de barridos (200 en
+el programa): `accel::coverageFieldCpu1`, `accel::coverageFieldCpuN` (franjas de filas por barrido; el retorno de
+`parallelFor` es la barrera) y GPU con un hilo por celda y **un lanzamiento por barrido** con dos buffers cuyos
+punteros se intercambian en el host (`src/accel/CoverageField.{h,cpp}`, `src/accel/cuda/CoverageField.cu`).
+Tolerancia contra cpu1: `|d| / (1 + |ref|) <= 1e-5` (en la práctica el resultado es idéntico).
+
+En la simulación, `CoverageFieldService` (`src/CoverageLayer.*`) toma la posición de los couriers cada ~2,5 s reales,
+pide el campo al `GpuWorker` (plazo real de 1 s; si falla o vence, CPU) y la ventana dibuja el último resultado
+listo. Tecla **C** muestra/oculta la capa de cobertura (rojo = poco cubierto) y **H** la de demanda; `--layers
+none|heat|coverage|both` elige las capas iniciales. Al terminar imprime en stderr `[estadisticas] zona menos
+cubierta: celda (x,y) ~ lat,lon, valor V` (zona de 16 × 16 celdas con menor cobertura media; las zonas del contorno
+salen castigadas porque el borde vale 0 por diseño). El resumen oficial y el log no cambian.
+
+```bash
+./delivery_sim ../config/ciudad.json --headless --bench c.csv --apps coverage_field --sizes 128,1024 --reps 2 --force
+./delivery_sim ../config/ciudad.json --no-window --layers coverage --snapshot cobertura.png
+```
+
 ## 3. Entrada y salida
 
 - **Entrada:** archivo JSON con el formato de la sección 5 del enunciado (`map`, `nodes`, `streets`,

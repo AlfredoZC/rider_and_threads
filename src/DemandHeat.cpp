@@ -28,10 +28,16 @@ std::pair<double, double> demandCellCenter(const Bounds& bounds, int gridWidth, 
 }
 
 std::vector<float> countPointsPerCell(const Bounds& bounds, int gridWidth, int gridHeight,
-                                      const std::vector<std::pair<double, double>>& latLonPoints) {
+                                      const std::vector<std::pair<double, double>>& latLonPoints, int borderMargin) {
     std::vector<float> pointsPerCell(static_cast<std::size_t>(gridWidth) * static_cast<std::size_t>(gridHeight), 0.0f);
+    // En una grilla muy chica el margen se recorta para que siempre quede al menos una celda valida.
+    const int marginX = std::max(0, std::min(borderMargin, (gridWidth - 1) / 2));
+    const int marginY = std::max(0, std::min(borderMargin, (gridHeight - 1) / 2));
     for (const auto& point : latLonPoints) {
-        pointsPerCell[demandCellIndex(bounds, gridWidth, gridHeight, point.first, point.second)] += 1.0f;
+        const std::size_t cell = demandCellIndex(bounds, gridWidth, gridHeight, point.first, point.second);
+        const int cellX = std::clamp(static_cast<int>(cell % static_cast<std::size_t>(gridWidth)), marginX, gridWidth - 1 - marginX);
+        const int cellY = std::clamp(static_cast<int>(cell / static_cast<std::size_t>(gridWidth)), marginY, gridHeight - 1 - marginY);
+        pointsPerCell[static_cast<std::size_t>(cellY) * static_cast<std::size_t>(gridWidth) + static_cast<std::size_t>(cellX)] += 1.0f;
     }
     return pointsPerCell;
 }

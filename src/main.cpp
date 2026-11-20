@@ -25,6 +25,7 @@
 #include <opencv2/imgproc.hpp>
 
 #include "Config.h"
+#include "CoverageLayer.h"
 #include "CourierActor.h"
 #include "DemandHeat.h"
 #include "Dispatcher.h"
@@ -62,18 +63,19 @@ struct Arguments {
     bool headless = false;
     accel::BackendChoice backend = accel::BackendChoice::automatic;
     std::string snapshotPath;  // --snapshot: PNG del ultimo cuadro dibujado
+    std::string layers = "heat";  // --layers none|heat|coverage|both: capas visibles al empezar
 };
 
 bool parseArguments(int argc, char** argv, Arguments& args) {
     if (argc < 2) {
         std::cerr << "Uso: " << argv[0]
                   << " <config.json> [--log <path>] [--no-window | --headless]\n"
-                  << "       [--backend cpu|gpu|auto] [--snapshot <png>]\n"
+                  << "       [--backend cpu|gpu|auto] [--snapshot <png>] [--layers none|heat|coverage|both]\n"
                   << "  --no-window  sin ventana, pero carga la imagen y dibuja cada cuadro\n"
                   << "  --headless   sin imagen, sin dibujo ni highgui; espera bloqueado\n"
                   << "  --backend    cpu | gpu | auto (por defecto): auto usa la GPU si esta lista\n"
                   << "  --snapshot   guarda el ultimo cuadro dibujado en un PNG (no vale con --headless)\n"
-                  << "  tecla H      muestra u oculta el mapa de calor de la demanda; G el grafo\n";
+                  << "  --layers     capas al empezar (por defecto heat); teclas H (demanda), C (cobertura), G (grafo)\n";
         return false;
     }
     args.configPath = argv[1];
@@ -92,6 +94,15 @@ bool parseArguments(int argc, char** argv, Arguments& args) {
             }
         } else if (flag == "--backend") {
             std::cerr << "Error: --backend necesita cpu, gpu o auto\n";
+            return false;
+        } else if (flag == "--layers" && i + 1 < argc) {
+            args.layers = argv[++i];
+            if (args.layers != "none" && args.layers != "heat" && args.layers != "coverage" && args.layers != "both") {
+                std::cerr << "Error: --layers admite none, heat, coverage o both\n";
+                return false;
+            }
+        } else if (flag == "--layers") {
+            std::cerr << "Error: --layers necesita none, heat, coverage o both\n";
             return false;
         } else if (flag == "--snapshot" && i + 1 < argc) {
             args.snapshotPath = argv[++i];
@@ -281,33 +292,49 @@ void drawPanel(cv::Mat& img, const OrderStats& stats, std::int64_t nowMs,
     drawLabel(img, drawableText(attribution), cv::Point(x, img.rows - 10), 0.45);
 }
 
-// Capa semitransparente del mapa de calor de la demanda. Se arma UNA vez por resultado nuevo (a tamano de la
-// imagen) y cada cuadro solo hace frame = frame * (1 - alfa) + color * alfa con operaciones saturadas de 8 bits.
-struct HeatOverlay {
+// Capas semitransparentes sobre el mapa (demanda y cobertura). Cada una se arma UNA vez por resultado nuevo (a
+// tamano de la imagen) y cada cuadro solo hace frame = frame * (1 - alfa) + color * alfa con operaciones
+// saturadas de 8 bits.
+struct MapOverlay {
     std::uint64_t version = 0;
-    float maxValue = 0.0f;
     cv::Mat premultipliedColor;  // color * alfa
     cv::Mat inverseAlpha;        // 255 - alfa
 };
 
-constexpr double kHeatMaxOpacity = 0.7;
-constexpr double kHeatTransparentBelow = 0.04;  // fraccion del maximo bajo la cual la capa es transparente
+struct LayerStyle {
+    int colormap;
+    bool emphasizeLow;  // false: la capa se ve donde el valor es ALTO (demanda); true: donde es BAJO (cobertura)
+    const char* title;
+    const char* keyHint;
+};
 
-void buildHeatOverlay(HeatOverlay& overlay, const DemandHeatSnapshot& snapshot, const cv::Size& imageSize) {
-    cv::Mat heat(kDemandGridSide, kDemandGridSide, CV_32F);
-    std::memcpy(heat.ptr<float>(), snapshot.demandHeat->data(), snapshot.demandHeat->size() * sizeof(float));
+constexpr double kLayerMaxOpacity = 0.7;
+constexpr double kLayerTransparentBelow = 0.04;  // demanda: fraccion del maximo bajo la cual la capa es transparente
+constexpr double kLayerTransparentAbove = 0.5;   // cobertura: fraccion del maximo desde la cual la capa es transparente
+
+const LayerStyle kDemandStyle{cv::COLORMAP_JET, false, "demanda suavizada (pedidos/celda, 10 min)", "[H]"};
+const LayerStyle kCoverageStyle{cv::COLORMAP_AUTUMN, true, "cobertura de la flota (rojo = poco cubierto)", "[C]"};
+
+void buildOverlay(MapOverlay& overlay, const std::vector<float>& values, float maxValue, std::uint64_t version,
+                  const LayerStyle& style, int gridSide, const cv::Size& imageSize) {
+    cv::Mat field(gridSide, gridSide, CV_32F);
+    std::memcpy(field.ptr<float>(), values.data(), values.size() * sizeof(float));
     cv::Mat level8;
-    const double scale = snapshot.maxValue > 0.0f ? 255.0 / snapshot.maxValue : 0.0;
-    heat.convertTo(level8, CV_8U, scale);
+    const double scale = maxValue > 0.0f ? 255.0 / maxValue : 0.0;
+    field.convertTo(level8, CV_8U, scale);
     cv::resize(level8, level8, imageSize, 0, 0, cv::INTER_CUBIC);
     cv::Mat color;
-    cv::applyColorMap(level8, color, cv::COLORMAP_JET);
+    cv::applyColorMap(level8, color, style.colormap);
     cv::Mat opacityTable(1, 256, CV_8U);
     for (int level = 0; level < 256; ++level) {
         const double fraction = level / 255.0;
-        const double opacity = fraction <= kHeatTransparentBelow
-                                   ? 0.0
-                                   : kHeatMaxOpacity * std::min(1.0, (fraction - kHeatTransparentBelow) / 0.25);
+        double opacity = 0.0;
+        if (style.emphasizeLow) {
+            opacity = fraction >= kLayerTransparentAbove ? 0.0
+                                                          : kLayerMaxOpacity * (1.0 - fraction / kLayerTransparentAbove);
+        } else if (fraction > kLayerTransparentBelow) {
+            opacity = kLayerMaxOpacity * std::min(1.0, (fraction - kLayerTransparentBelow) / 0.25);
+        }
         opacityTable.at<unsigned char>(0, level) = static_cast<unsigned char>(std::lround(opacity * 255.0));
     }
     cv::Mat alpha8;
@@ -316,27 +343,27 @@ void buildHeatOverlay(HeatOverlay& overlay, const DemandHeatSnapshot& snapshot, 
     cv::cvtColor(alpha8, alpha3, cv::COLOR_GRAY2BGR);
     cv::multiply(color, alpha3, overlay.premultipliedColor, 1.0 / 255.0);
     cv::subtract(cv::Scalar::all(255), alpha3, overlay.inverseAlpha);
-    overlay.version = snapshot.version;
-    overlay.maxValue = snapshot.maxValue;
+    overlay.version = version;
 }
 
-void blendHeatOverlay(cv::Mat& frame, const HeatOverlay& overlay) {
+void blendOverlay(cv::Mat& frame, const MapOverlay& overlay) {
     cv::Mat attenuated;
     cv::multiply(frame, overlay.inverseAlpha, attenuated, 1.0 / 255.0);
     cv::add(attenuated, overlay.premultipliedColor, frame);
 }
 
-void drawHeatLegend(cv::Mat& img, float maxValue, bool usedGpu) {
+// Leyenda de una capa; `slot` 0 es la de abajo y 1 la de arriba (cuando se ven las dos capas a la vez).
+void drawLayerLegend(cv::Mat& img, float maxValue, bool usedGpu, const LayerStyle& style, int slot) {
     const int barWidth = 200;
     const int barHeight = 14;
     const int left = std::max(12, img.cols - barWidth - 40);
-    const int top = img.rows - 52;
+    const int top = img.rows - 52 - slot * 70;
     cv::Mat ramp(1, barWidth, CV_8U);
     for (int column = 0; column < barWidth; ++column) {
         ramp.at<unsigned char>(0, column) = static_cast<unsigned char>(column * 255 / (barWidth - 1));
     }
     cv::Mat rampColor;
-    cv::applyColorMap(ramp, rampColor, cv::COLORMAP_JET);
+    cv::applyColorMap(ramp, rampColor, style.colormap);
     cv::resize(rampColor, rampColor, cv::Size(barWidth, barHeight), 0, 0, cv::INTER_NEAREST);
     rampColor.copyTo(img(cv::Rect(left, top, barWidth, barHeight)));
     cv::rectangle(img, cv::Rect(left, top, barWidth, barHeight), cv::Scalar(0, 0, 0), 1);
@@ -347,8 +374,8 @@ void drawHeatLegend(cv::Mat& img, float maxValue, bool usedGpu) {
         const cv::Size size = cv::getTextSize(text, cv::FONT_HERSHEY_SIMPLEX, 0.4, 1, &baseline);
         drawLabel(img, text, cv::Point(std::max(8, img.cols - size.width - 12), baselineY), 0.4);
     };
-    rightAlignedLabel("demanda suavizada (pedidos/celda, 10 min)", top - 26);
-    rightAlignedLabel(std::string("[H] ocultar - calculo en ") + (usedGpu ? "GPU" : "CPU"), top - 6);
+    rightAlignedLabel(style.title, top - 26);
+    rightAlignedLabel(std::string(style.keyHint) + " ocultar - calculo en " + (usedGpu ? "GPU" : "CPU"), top - 6);
     drawLabel(img, "0", cv::Point(left, top + barHeight + 18), 0.4);
     drawLabel(img, maxText, cv::Point(left + barWidth - 30, top + barHeight + 18), 0.4);
 }
@@ -517,7 +544,8 @@ int main(int argc, char** argv) {
     const int kEscKey = 27;
     const int kFrameMs = 33;
     bool showGraph = false;
-    bool showHeat = true;
+    bool showHeat = args.layers == "heat" || args.layers == "both";
+    bool showCoverage = args.layers == "coverage" || args.layers == "both";  // teclas H y C alternan
 
     const CityGraph graph(cfg);
 
@@ -573,7 +601,10 @@ int main(int argc, char** argv) {
 
     DemandHeatService heatService(cfg, ctx);
     heatService.start();
-    HeatOverlay heatOverlay;
+    MapOverlay heatOverlay;
+    CoverageFieldService coverageService(cfg, ctx, fleet);
+    coverageService.start();
+    MapOverlay coverageOverlay;
 
     cv::Mat frame;
     std::vector<Courier> views;
@@ -592,15 +623,28 @@ int main(int argc, char** argv) {
         for (CourierActor* actor : fleet.activeSnapshot()) {
             views.push_back(actor->snapshot());
         }
+        // Capas: dibujan el ULTIMO resultado listo; nunca esperan a la GPU (lo calculan los hilos de los servicios).
+        int legendSlot = 0;
+        if (showCoverage) {
+            const CoverageSnapshot coverageSnapshot = coverageService.latest();
+            if (coverageSnapshot.coverage) {
+                if (coverageOverlay.version != coverageSnapshot.version || coverageOverlay.premultipliedColor.empty()) {
+                    buildOverlay(coverageOverlay, *coverageSnapshot.coverage, coverageSnapshot.scaleValue,
+                                 coverageSnapshot.version, kCoverageStyle, kCoverageGridSide, frame.size());
+                }
+                blendOverlay(frame, coverageOverlay);
+                drawLayerLegend(frame, coverageSnapshot.scaleValue, coverageSnapshot.usedGpu, kCoverageStyle, legendSlot++);
+            }
+        }
         if (showHeat) {
-            // Dibuja el ULTIMO resultado listo; nunca espera a la GPU (lo calcula el hilo del servicio).
             const DemandHeatSnapshot heatSnapshot = heatService.latest();
             if (heatSnapshot.demandHeat) {
                 if (heatOverlay.version != heatSnapshot.version || heatOverlay.premultipliedColor.empty()) {
-                    buildHeatOverlay(heatOverlay, heatSnapshot, frame.size());
+                    buildOverlay(heatOverlay, *heatSnapshot.demandHeat, heatSnapshot.maxValue, heatSnapshot.version,
+                                 kDemandStyle, kDemandGridSide, frame.size());
                 }
-                blendHeatOverlay(frame, heatOverlay);
-                drawHeatLegend(frame, heatSnapshot.maxValue, heatSnapshot.usedGpu);
+                blendOverlay(frame, heatOverlay);
+                drawLayerLegend(frame, heatSnapshot.maxValue, heatSnapshot.usedGpu, kDemandStyle, legendSlot++);
             }
         }
         drawActiveDeliveries(frame, px, ctx, views, nowMs);
@@ -620,6 +664,9 @@ int main(int argc, char** argv) {
             }
             if (key == 'h' || key == 'H') {
                 showHeat = !showHeat;
+            }
+            if (key == 'c' || key == 'C') {
+                showCoverage = !showCoverage;
             }
             if (cv::getWindowProperty(windowName, cv::WND_PROP_VISIBLE) < 1) {
                 break;
@@ -729,7 +776,11 @@ int main(int argc, char** argv) {
     heatService.requestStop();
     heatService.join();
     heatService.refresh();
+    coverageService.requestStop();
+    coverageService.join();
+    coverageService.refresh();
     std::cerr << heatService.hottestZone() << std::endl;
+    std::cerr << coverageService.leastCoveredZone() << std::endl;
 
     // Ya no queda ningun hilo que envie trabajo a la GPU: se apaga (resuelve lo pendiente y une).
     if (backend.worker) {

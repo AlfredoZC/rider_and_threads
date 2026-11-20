@@ -29,9 +29,11 @@ std::size_t demandCellIndex(const Bounds& bounds, int gridWidth, int gridHeight,
 // Centro de la celda (cellX, cellY) como (lat, lon).
 std::pair<double, double> demandCellCenter(const Bounds& bounds, int gridWidth, int gridHeight, int cellX,
                                            int cellY);
-// Cuantos puntos (lat, lon) caen en cada celda.
+// Cuantos puntos (lat, lon) caen en cada celda. borderMargin = 0 para pedidos; 1 para couriers: ninguno cae en
+// el contorno de la grilla (que el campo de cobertura fija en 0).
 std::vector<float> countPointsPerCell(const Bounds& bounds, int gridWidth, int gridHeight,
-                                      const std::vector<std::pair<double, double>>& latLonPoints);
+                                      const std::vector<std::pair<double, double>>& latLonPoints,
+                                      int borderMargin = 0);
 
 struct DemandHeatSnapshot {
     std::shared_ptr<const std::vector<float>> demandHeat;  // nulo hasta el primer resultado
