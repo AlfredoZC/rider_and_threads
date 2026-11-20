@@ -614,7 +614,10 @@ int main(int argc, char** argv) {
         headlessStop.waitUntil(clock, durationMs);
         headlessStop.finish();
     }
+    std::vector<double> frameWorkMs;
+    const auto loopStart = std::chrono::steady_clock::now();
     while (!args.headless) {
+        const auto frameStart = std::chrono::steady_clock::now();
         (showGraph ? withGraph : image).copyTo(frame);
 
         const std::int64_t nowMs = clock.nowMs();
@@ -652,9 +655,11 @@ int main(int argc, char** argv) {
         drawPanel(frame, book.stats(), nowMs, cfg.attribution,
                   fleet.reinforcementsJoined(), fleet.reinforcementsRetired());
         if (args.noWindow) {
+            frameWorkMs.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - frameStart).count());
             std::this_thread::sleep_for(std::chrono::milliseconds(kFrameMs));
         } else {
             cv::imshow(windowName, frame);
+            frameWorkMs.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - frameStart).count());
             const int key = cv::waitKey(kFrameMs);
             if (key == kEscKey) {
                 break;
@@ -678,6 +683,23 @@ int main(int argc, char** argv) {
         if (durationMs > 0 && clock.nowMs() >= durationMs) {
             break;
         }
+    }
+
+    // Cuadros dibujados (ventana o --no-window): el tiempo de dibujo EXCLUYE la espera del ritmo de cuadros
+    // (sleep / waitKey). En --headless no hay cuadros y no se imprime nada.
+    if (!args.headless && !frameWorkMs.empty()) {
+        const double loopSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - loopStart).count();
+        std::vector<double> sortedWorkMs(frameWorkMs);
+        std::sort(sortedWorkMs.begin(), sortedWorkMs.end());
+        const auto percentile = [&sortedWorkMs](double fraction) {
+            return sortedWorkMs[static_cast<std::size_t>(fraction * static_cast<double>(sortedWorkMs.size() - 1))];
+        };
+        char fpsLine[200];
+        std::snprintf(fpsLine, sizeof fpsLine,
+                      "[estadisticas] cuadros: %zu, fps medio %.1f, tiempo de dibujo p50 %.2f ms / p95 %.2f ms",
+                      frameWorkMs.size(), loopSeconds > 0.0 ? static_cast<double>(frameWorkMs.size()) / loopSeconds : 0.0,
+                      percentile(0.50), percentile(0.95));
+        std::cerr << fpsLine << std::endl;
     }
 
     if (!args.snapshotPath.empty()) {

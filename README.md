@@ -355,6 +355,21 @@ salen castigadas porque el borde vale 0 por diseño). El resumen oficial y el lo
 ./delivery_sim ../config/ciudad.json --no-window --layers coverage --snapshot cobertura.png
 ```
 
+### Efecto de la GPU sobre la simulación completa (`sim_metrics.py`, `sim_compare.sh`)
+
+Mide el sistema en marcha (no el kernel aislado): latencia de despacho por pedido (`orderCreated` → primer
+`orderAssigned`, en tiempo simulado: media, p50, p90, p99, máx.), pedidos entregados por hora simulada, rechazos y
+FPS de la ventana. Con ventana o `--no-window` el programa imprime al terminar, en stderr, `[estadisticas] cuadros: N,
+fps medio X, tiempo de dibujo p50 Y ms / p95 Z ms` (el tiempo de dibujo excluye la espera del ritmo de cuadros; en
+`--headless` no hay cuadros y no se imprime). `tools/sim_metrics.py <log> [--stderr <err>] [--format json|csv]`
+calcula las métricas de una corrida (solo biblioteca estándar; sin pedidos no falla). `tools/sim_compare.sh` corre la
+ciudad N veces **alternando `--backend auto` y `--backend cpu`** con duración real fija, valida cada log con
+`validate_log.py` y escribe un CSV (`backend,run,mode,validator_ok,<métricas>`). Prueba: `python3 tests/test_sim_metrics.py`.
+
+```bash
+tools/sim_compare.sh -b build/delivery_sim -n 3 -d 30 -m no-window -o sim_compare.csv   # -m headless | window
+```
+
 ## 3. Entrada y salida
 
 - **Entrada:** archivo JSON con el formato de la sección 5 del enunciado (`map`, `nodes`, `streets`,
