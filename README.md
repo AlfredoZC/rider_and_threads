@@ -67,6 +67,7 @@ cmake .. && make
 | `<config.json>` (obligatorio) | Ruta al archivo de configuración |
 | `--log <path>` (opcional) | Escribe el log de eventos en `<path>` en vez de `events.log` |
 | `--no-window` (opcional) | Corre la simulación sin abrir la ventana. Ver más abajo |
+| `--headless` (opcional) | Corre sin ventana, sin imagen y sin dibujo; la espera es bloqueante. Ver más abajo |
 
 Builds instrumentados:
 
@@ -114,6 +115,28 @@ las librerías con las que OpenCV abre la ventana tienen carreras propias que en
 reporte y que no se pueden suprimir por nombre porque vienen sin símbolos. Sin ventana, lo
 que queda bajo análisis es exactamente la concurrencia de este programa. Por defecto la
 ventana se abre, que es lo que pide el §2 del enunciado.
+
+### La bandera `--headless`
+
+```
+./delivery_sim config/ciudad.json --log events.log --headless
+```
+
+Corre la simulación sin ventana **y sin parte gráfica**: no lee la imagen del mapa (la ruta
+`map.image` del config puede no existir), no arma el mapa de píxeles, no dibuja ningún cuadro y no
+llama a OpenCV highgui. Los hilos, el log, el resumen en `stdout` y la línea `Backend:` en `stderr`
+son los mismos. Sirve para correr y medir en una máquina con GPU que no puede abrir la ventana
+(p. ej. `nsys profile --stats=true -o timeline ./delivery_sim ciudad.json --headless`).
+
+Diferencia con `--no-window`: `--no-window` conserva todo el camino gráfico (carga la imagen, dibuja
+cada cuadro y duerme 33 ms por vuelta) y existe para el análisis con ThreadSanitizer del §12;
+`--headless` quita ese camino por completo. Si se pasan ambos, manda `--headless`.
+
+Cómo espera: el hilo principal queda **bloqueado** en una `condition_variable` (`wait_until` hasta el
+instante real en que el reloj simulado llega a `durationS`), sin sleeps ni sondeo. `SIGINT` y
+`SIGTERM` se bloquean en todos los hilos antes de crear el primero y un hilo dedicado las recibe con
+`sigwait`, que despierta al principal. Después se ejecuta el mismo orden de apagado de siempre.
+Prueba automatizada: `bash tools/check_headless.sh build/delivery_sim`.
 
 ## 3. Entrada y salida
 

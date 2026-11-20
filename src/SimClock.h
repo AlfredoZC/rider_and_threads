@@ -19,6 +19,19 @@ inline std::int64_t saturatingAddMs(std::int64_t a, std::int64_t b) {
     return a + b;
 }
 
+// Segundos -> milisegundos saturado a int64 (durationS * 1000 sin desbordar).
+inline std::int64_t secondsToMsSaturated(std::int64_t seconds) {
+    constexpr std::int64_t kMax = std::numeric_limits<std::int64_t>::max() / 1000;
+    constexpr std::int64_t kMin = std::numeric_limits<std::int64_t>::min() / 1000;
+    if (seconds > kMax) {
+        return std::numeric_limits<std::int64_t>::max();
+    }
+    if (seconds < kMin) {
+        return std::numeric_limits<std::int64_t>::min();
+    }
+    return seconds * 1000;
+}
+
 class SimClock {
 public:
     // Tope de una duracion real, en microsegundos (~31 anios): con steady_clock (ns en int64)
