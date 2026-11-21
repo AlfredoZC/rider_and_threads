@@ -1,0 +1,19 @@
+Apps GPU registradas: apsp_dijkstra apsp_floyd best_courier best_courier_divergent calib_copy calib_launch candidate_filter candidate_filter_naive coverage_field delivery_histogram delivery_percentiles delivery_timeline demand_heatmap demand_heatmap_tiles eta_batch_aos eta_batch_soa histogram_naive orders_in_progress
+OK    memcheck apsp_dijkstra (size 400): ========= ERROR SUMMARY: 0 errors
+OK    memcheck apsp_floyd (size 400): ========= ERROR SUMMARY: 0 errors
+OK    memcheck best_courier (size 400): ========= ERROR SUMMARY: 0 errors
+OK    memcheck best_courier_divergent (size 400): ========= ERROR SUMMARY: 0 errors
+OK    memcheck calib_copy (size 400): ========= ERROR SUMMARY: 0 errors
+OK    memcheck calib_launch (size 400): ========= ERROR SUMMARY: 0 errors
+OK    memcheck candidate_filter (size 400): ========= ERROR SUMMARY: 0 errors
+OK    memcheck candidate_filter_naive (size 400): ========= ERROR SUMMARY: 0 errors
+OK    memcheck coverage_field (size 400): ========= ERROR SUMMARY: 0 errors
+OK    memcheck delivery_histogram (size 400): ========= ERROR SUMMARY: 0 errors
+OK    memcheck delivery_percentiles (size 400): ========= ERROR SUMMARY: 0 errors
+OK    memcheck delivery_timeline (size 400): ========= ERROR SUMMARY: 0 errors
+OK    memcheck demand_heatmap (size 400): ========= ERROR SUMMARY: 0 errors
+OK    memcheck demand_heatmap_tiles (size 400): ========= ERROR SUMMARY: 0 errors
+OK    memcheck eta_batch_aos (size 400): ========= ERROR SUMMARY: 0 errors
+OK    memcheck eta_batch_soa (size 400): ========= ERROR SUMMARY: 0 errors
+OK    memcheck histogram_naive (size 400): ========= ERROR SUMMARY: 0 errors
+OK    memcheck orders_in_progress (size 400): ========= ERROR SUMMARY: 0 errors

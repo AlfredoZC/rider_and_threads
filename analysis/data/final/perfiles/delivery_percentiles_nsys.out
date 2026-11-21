@@ -1,0 +1,29 @@
+WARNING: Device-side CUDA Event completion trace is currently enabled.
+         This may increase runtime overhead and the likelihood of false
+         dependencies across CUDA Streams. If you wish to avoid this, please
+         disable the feature with --cuda-event-trace=false.
+Backend: GPU CUDA "NVIDIA GeForce RTX 4050 Laptop GPU", cc 8.9, 6140 MiB
+application,version,size,rep,ms,correct,threads,seed,h2d_ms,kernel_ms,d2h_ms
+delivery_percentiles,gpu_e2e,10000000,0,71.290377,yes,1,12345,3.797536,60.117409,4.106016
+Collecting data...
+Generating '/tmp/nsys-report-36e3.qdstrm'
+
+[1/1] [0%                          ] delivery_percentiles_nsys.nsys-rep
+[1/1] [0%                          ] delivery_percentiles_nsys.nsys-rep
+[1/1] [=====29%                    ] delivery_percentiles_nsys.nsys-rep
+[1/1] [=====30%                    ] delivery_percentiles_nsys.nsys-rep
+[1/1] [=====31%                    ] delivery_percentiles_nsys.nsys-rep
+[1/1] [=====32%                    ] delivery_percentiles_nsys.nsys-rep
+[1/1] [======33%                   ] delivery_percentiles_nsys.nsys-rep
+[1/1] [======34%                   ] delivery_percentiles_nsys.nsys-rep
+[1/1] [======35%                   ] delivery_percentiles_nsys.nsys-rep
+[1/1] [=======36%                  ] delivery_percentiles_nsys.nsys-rep
+[1/1] [=======37%                  ] delivery_percentiles_nsys.nsys-rep
+[1/1] [=======38%                  ] delivery_percentiles_nsys.nsys-rep
+[1/1] [=======39%                  ] delivery_percentiles_nsys.nsys-rep
+[1/1] [=============60%            ] delivery_percentiles_nsys.nsys-rep
+[1/1] [==================78%       ] delivery_percentiles_nsys.nsys-rep
+[1/1] [========================100%] delivery_percentiles_nsys.nsys-rep
+[1/1] [========================100%] delivery_percentiles_nsys.nsys-rep
+Generated:
+	~/ec2inf/perfiles/delivery_percentiles_nsys.nsys-rep

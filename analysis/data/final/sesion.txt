@@ -1,0 +1,32 @@
+commit: 098eb41 (rt-int, ec2-integracion-local)
+inicio: 2026-11-20T20:32:57-04:00
+loadavg: 0.54 1.87 6.32 2/2844 87604
+otros procesos: 0
+16
+name, pstate, clocks.current.sm [MHz], clocks.current.memory [MHz], clocks.max.sm [MHz], power.limit [W], driver_version
+NVIDIA GeForce RTX 4050 Laptop GPU, P0, 2355 MHz, 8000 MHz, 3105 MHz, [N/A], 576.80
+== calib (calib_copy,calib_launch) inicio 20:32:57 load 0.54
+   calib rc=0 duracion=82s load 1.93 | Filas escritas: 1100, con correct=no: 0, corridas con error: 0
+== apsp (apsp_floyd,apsp_dijkstra) inicio 20:34:19 load 1.93
+   apsp rc=0 duracion=640s load 2.41 | Filas escritas: 1080, con correct=no: 0, corridas con error: 0
+== candidate_filter (candidate_filter,candidate_filter_naive) inicio 20:44:59 load 2.41
+   candidate_filter rc=0 duracion=3s load 2.41 | Filas escritas: 780, con correct=no: 0, corridas con error: 0
+== eta_batch (eta_batch_soa,eta_batch_aos) inicio 20:45:02 load 2.41
+   eta_batch rc=0 duracion=4s load 2.29 | Filas escritas: 780, con correct=no: 0, corridas con error: 0
+== best_courier (best_courier,best_courier_divergent) inicio 20:45:06 load 2.29
+   best_courier rc=0 duracion=1s load 2.29 | Filas escritas: 780, con correct=no: 0, corridas con error: 0
+== delivery_histogram (delivery_histogram,histogram_naive) inicio 20:45:07 load 2.29
+   delivery_histogram rc=0 duracion=2s load 3.07 | Filas escritas: 600, con correct=no: 0, corridas con error: 0
+== orders_in_progress (orders_in_progress) inicio 20:45:09 load 3.07
+   orders_in_progress rc=0 duracion=4s load 2.91 | Filas escritas: 500, con correct=no: 0, corridas con error: 0
+== delivery_percentiles (delivery_percentiles) inicio 20:45:13 load 2.91
+   delivery_percentiles rc=0 duracion=54s load 3.14 | Filas escritas: 500, con correct=no: 0, corridas con error: 0
+== delivery_timeline (delivery_timeline) inicio 20:46:07 load 3.14
+   delivery_timeline rc=0 duracion=28s load 2.50 | Filas escritas: 500, con correct=no: 0, corridas con error: 0
+== demand_heatmap (demand_heatmap,demand_heatmap_tiles) inicio 20:46:35 load 2.50
+   demand_heatmap rc=0 duracion=15s load 2.39 | Filas escritas: 1800, con correct=no: 0, corridas con error: 0
+== coverage_field (coverage_field) inicio 20:46:50 load 2.39
+   coverage_field rc=0 duracion=34s load 2.23 | Filas escritas: 900, con correct=no: 0, corridas con error: 0
+== sim_compare inicio 20:47:25
+   sim_compare rc=0
+fin: 2026-11-20T20:50:27-04:00 loadavg: 0.69 1.57 3.32 1/2831 13444

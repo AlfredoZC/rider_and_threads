@@ -1,0 +1,7 @@
+==PROF== Connected to process 18563 (~/intci/build-cuda/delivery_sim)
+Backend: GPU CUDA "NVIDIA GeForce RTX 4050 Laptop GPU", cc 8.9, 6140 MiB
+==PROF== Profiling "floydWarshallPhase3": 0%....50%....100% - 40 passes
+application,version,size,rep,ms,correct,threads,seed,h2d_ms,kernel_ms,d2h_ms
+apsp_floyd,gpu_e2e,3741,0,2306.781354,yes,1,12345,6.168608,1675.584961,6.466592
+==PROF== Disconnected from process 18563
+==PROF== Report: ~/ec2inf/perfiles/apsp_floyd_ncu.ncu-rep

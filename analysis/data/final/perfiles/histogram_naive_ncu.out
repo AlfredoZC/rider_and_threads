@@ -1,0 +1,7 @@
+==PROF== Connected to process 19939 (~/intci/build-cuda/delivery_sim)
+Backend: GPU CUDA "NVIDIA GeForce RTX 4050 Laptop GPU", cc 8.9, 6140 MiB
+==PROF== Profiling "histogramGlobalAtomicsKernel": 0%....50%....100% - 40 passes
+application,version,size,rep,ms,correct,threads,seed,h2d_ms,kernel_ms,d2h_ms
+histogram_naive,gpu_e2e,10000000,0,1121.636644,yes,1,12345,5.398016,1113.001221,0.092000
+==PROF== Disconnected from process 19939
+==PROF== Report: ~/ec2inf/perfiles/histogram_naive_ncu.ncu-rep

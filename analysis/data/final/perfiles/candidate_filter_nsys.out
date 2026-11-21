@@ -1,0 +1,27 @@
+WARNING: Device-side CUDA Event completion trace is currently enabled.
+         This may increase runtime overhead and the likelihood of false
+         dependencies across CUDA Streams. If you wish to avoid this, please
+         disable the feature with --cuda-event-trace=false.
+Backend: GPU CUDA "NVIDIA GeForce RTX 4050 Laptop GPU", cc 8.9, 6140 MiB
+application,version,size,rep,ms,correct,threads,seed,h2d_ms,kernel_ms,d2h_ms
+candidate_filter,gpu_e2e,200000,0,12.757250,yes,1,12345,5.604128,3.923648,1.270848
+Collecting data...
+Generating '/tmp/nsys-report-005f.qdstrm'
+
+[1/1] [0%                          ] candidate_filter_nsys.nsys-rep
+[1/1] [0%                          ] candidate_filter_nsys.nsys-rep
+[1/1] [=======39%                  ] candidate_filter_nsys.nsys-rep
+[1/1] [========40%                 ] candidate_filter_nsys.nsys-rep
+[1/1] [========41%                 ] candidate_filter_nsys.nsys-rep
+[1/1] [========42%                 ] candidate_filter_nsys.nsys-rep
+[1/1] [=========43%                ] candidate_filter_nsys.nsys-rep
+[1/1] [=========44%                ] candidate_filter_nsys.nsys-rep
+[1/1] [=========45%                ] candidate_filter_nsys.nsys-rep
+[1/1] [=========46%                ] candidate_filter_nsys.nsys-rep
+[1/1] [==========48%               ] candidate_filter_nsys.nsys-rep
+[1/1] [==================78%       ] candidate_filter_nsys.nsys-rep
+[1/1] [=====================86%    ] candidate_filter_nsys.nsys-rep
+[1/1] [========================100%] candidate_filter_nsys.nsys-rep
+[1/1] [========================100%] candidate_filter_nsys.nsys-rep
+Generated:
+	~/ec2inf/perfiles/candidate_filter_nsys.nsys-rep

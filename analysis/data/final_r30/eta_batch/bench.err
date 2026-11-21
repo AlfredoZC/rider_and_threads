@@ -1,0 +1,14 @@
+Backend: GPU CUDA "NVIDIA GeForce RTX 4050 Laptop GPU", cc 8.9, 6140 MiB
+[eta_batch_soa] size=50 (10 versiones x 30 repeticiones)
+[eta_batch_soa] size=150 (10 versiones x 30 repeticiones)
+[eta_batch_soa] size=500 (10 versiones x 30 repeticiones)
+[eta_batch_soa] size=777 (10 versiones x 30 repeticiones)
+[eta_batch_soa] size=2000 (10 versiones x 30 repeticiones)
+[eta_batch_soa] size=5000 (10 versiones x 30 repeticiones)
+[eta_batch_aos] size=50 (3 versiones x 30 repeticiones)
+[eta_batch_aos] size=150 (3 versiones x 30 repeticiones)
+[eta_batch_aos] size=500 (3 versiones x 30 repeticiones)
+[eta_batch_aos] size=777 (3 versiones x 30 repeticiones)
+[eta_batch_aos] size=2000 (3 versiones x 30 repeticiones)
+[eta_batch_aos] size=5000 (3 versiones x 30 repeticiones)
+Filas escritas: 2340, con correct=no: 0, corridas con error: 0

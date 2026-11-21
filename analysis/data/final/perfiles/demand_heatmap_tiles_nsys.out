@@ -1,0 +1,32 @@
+WARNING: Device-side CUDA Event completion trace is currently enabled.
+         This may increase runtime overhead and the likelihood of false
+         dependencies across CUDA Streams. If you wish to avoid this, please
+         disable the feature with --cuda-event-trace=false.
+Backend: GPU CUDA "NVIDIA GeForce RTX 4050 Laptop GPU", cc 8.9, 6140 MiB
+application,version,size,rep,ms,correct,threads,seed,h2d_ms,kernel_ms,d2h_ms
+demand_heatmap_tiles,gpu_e2e,2048,0,5.594390,yes,1,12345,1.661344,1.051424,1.669376
+Collecting data...
+Generating '/tmp/nsys-report-78d6.qdstrm'
+
+[1/1] [0%                          ] demand_heatmap_tiles_nsys.nsys-rep
+[1/1] [0%                          ] demand_heatmap_tiles_nsys.nsys-rep
+[1/1] [=====32%                    ] demand_heatmap_tiles_nsys.nsys-rep
+[1/1] [======35%                   ] demand_heatmap_tiles_nsys.nsys-rep
+[1/1] [=======36%                  ] demand_heatmap_tiles_nsys.nsys-rep
+[1/1] [=======37%                  ] demand_heatmap_tiles_nsys.nsys-rep
+[1/1] [=======38%                  ] demand_heatmap_tiles_nsys.nsys-rep
+[1/1] [=======39%                  ] demand_heatmap_tiles_nsys.nsys-rep
+[1/1] [========40%                 ] demand_heatmap_tiles_nsys.nsys-rep
+[1/1] [========41%                 ] demand_heatmap_tiles_nsys.nsys-rep
+[1/1] [========42%                 ] demand_heatmap_tiles_nsys.nsys-rep
+[1/1] [=========43%                ] demand_heatmap_tiles_nsys.nsys-rep
+[1/1] [=========44%                ] demand_heatmap_tiles_nsys.nsys-rep
+[1/1] [=========45%                ] demand_heatmap_tiles_nsys.nsys-rep
+[1/1] [=========46%                ] demand_heatmap_tiles_nsys.nsys-rep
+[1/1] [==========47%               ] demand_heatmap_tiles_nsys.nsys-rep
+[1/1] [===============66%          ] demand_heatmap_tiles_nsys.nsys-rep
+[1/1] [===================80%      ] demand_heatmap_tiles_nsys.nsys-rep
+[1/1] [========================100%] demand_heatmap_tiles_nsys.nsys-rep
+[1/1] [========================100%] demand_heatmap_tiles_nsys.nsys-rep
+Generated:
+	~/ec2inf/perfiles/demand_heatmap_tiles_nsys.nsys-rep

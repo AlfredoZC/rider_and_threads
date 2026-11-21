@@ -1,0 +1,32 @@
+WARNING: Device-side CUDA Event completion trace is currently enabled.
+         This may increase runtime overhead and the likelihood of false
+         dependencies across CUDA Streams. If you wish to avoid this, please
+         disable the feature with --cuda-event-trace=false.
+Backend: GPU CUDA "NVIDIA GeForce RTX 4050 Laptop GPU", cc 8.9, 6140 MiB
+application,version,size,rep,ms,correct,threads,seed,h2d_ms,kernel_ms,d2h_ms
+orders_in_progress,gpu_e2e,10000000,0,643.086676,yes,1,12345,5.189792,2.534336,3.986432
+Collecting data...
+Generating '/tmp/nsys-report-0e79.qdstrm'
+
+[1/1] [0%                          ] orders_in_progress_nsys.nsys-rep
+[1/1] [0%                          ] orders_in_progress_nsys.nsys-rep
+[1/1] [=====31%                    ] orders_in_progress_nsys.nsys-rep
+[1/1] [=====32%                    ] orders_in_progress_nsys.nsys-rep
+[1/1] [======33%                   ] orders_in_progress_nsys.nsys-rep
+[1/1] [======34%                   ] orders_in_progress_nsys.nsys-rep
+[1/1] [======35%                   ] orders_in_progress_nsys.nsys-rep
+[1/1] [=======36%                  ] orders_in_progress_nsys.nsys-rep
+[1/1] [=======37%                  ] orders_in_progress_nsys.nsys-rep
+[1/1] [=======38%                  ] orders_in_progress_nsys.nsys-rep
+[1/1] [=======39%                  ] orders_in_progress_nsys.nsys-rep
+[1/1] [========40%                 ] orders_in_progress_nsys.nsys-rep
+[1/1] [========42%                 ] orders_in_progress_nsys.nsys-rep
+[1/1] [=========43%                ] orders_in_progress_nsys.nsys-rep
+[1/1] [=========44%                ] orders_in_progress_nsys.nsys-rep
+[1/1] [=========45%                ] orders_in_progress_nsys.nsys-rep
+[1/1] [==============64%           ] orders_in_progress_nsys.nsys-rep
+[1/1] [===================79%      ] orders_in_progress_nsys.nsys-rep
+[1/1] [========================100%] orders_in_progress_nsys.nsys-rep
+[1/1] [========================100%] orders_in_progress_nsys.nsys-rep
+Generated:
+	~/ec2inf/perfiles/orders_in_progress_nsys.nsys-rep

@@ -1,0 +1,97 @@
+FLAGS: -std=c++17 -Wall -Wextra -g -pthread -Isrc -Ithird_party
+SRC (68 archivos): src/CityGraph.cpp src/Config.cpp src/CourierActor.cpp src/CoverageLayer.cpp src/DemandHeat.cpp src/Dispatcher.cpp src/EventLog.cpp src/Fleet.cpp src/KitchenScheduler.cpp src/OrderBook.cpp src/OrderFactory.cpp src/OrderGenerator.cpp src/Quote.cpp src/QuotePool.cpp src/Restaurant.cpp src/Router.cpp src/Summary.cpp src/TsanSuppressions.cpp src/accel/Backend.cpp src/accel/BestCourier.cpp src/accel/CandidateFilter.cpp src/accel/CoverageField.cpp src/accel/DeliveryHistogram.cpp src/accel/DeliveryPercentiles.cpp src/accel/DeliveryTimeline.cpp src/accel/DemandHeatmap.cpp src/accel/EtaBatch.cpp src/accel/GpuInfo.cpp src/accel/GpuWorker.cpp src/accel/OpenOrders.cpp src/accel/ThreadPool.cpp src/accel/TravelTimeTable.cpp src/accel/cpu/BestCourierCpu.cpp src/accel/cpu/CalibCpu.cpp src/accel/cpu/CandidateFilterCpu.cpp src/accel/cpu/CoverageFieldCpu.cpp src/accel/cpu/DeliveryHistogramCpu.cpp src/accel/cpu/DeliveryPercentilesCpu.cpp src/accel/cpu/DeliveryTimelineCpu.cpp src/accel/cpu/DemandHeatmapCpu.cpp src/accel/cpu/EtaBatchCpu.cpp src/accel/cpu/GpuContextCpu.cpp src/accel/cpu/GpuInfoCpu.cpp src/accel/cpu/OpenOrdersCpu.cpp src/accel/cpu/TravelTimeTableCpu.cpp src/bench/ApspDijkstraBench.cpp src/bench/ApspFloydBench.cpp src/bench/BenchCli.cpp src/bench/BenchCsv.cpp src/bench/BenchGraph.cpp src/bench/BenchMain.cpp src/bench/BenchRegistry.cpp src/bench/BenchRunner.cpp src/bench/BestCourierBench.cpp src/bench/BuildInfo.cpp src/bench/CalibCopy.cpp src/bench/CalibLaunch.cpp src/bench/CandidateFilterBench.cpp src/bench/CitySubgraph.cpp src/bench/CoverageFieldBench.cpp src/bench/DeliveryHistogramBench.cpp src/bench/DeliveryPercentilesBench.cpp src/bench/DeliveryTimelineBench.cpp src/bench/DeliveryTimes.cpp src/bench/DemandHeatmapBench.cpp src/bench/EnvInfo.cpp src/bench/EtaBatchBench.cpp src/bench/OrdersInProgressBench.cpp 
+Building CXX object ~/intci/tobj/src/accel/cpu/BestCourierCpu.o
+Building CXX object ~/intci/tobj/src/accel/BestCourier.o
+Building CXX object ~/intci/tobj/src/accel/cpu/EtaBatchCpu.o
+Building CXX object ~/intci/tobj/tests/test_best_courier.o
+Building CXX object ~/intci/tobj/tests/test_eta_batch.o
+Building CXX object ~/intci/tobj/src/bench/BestCourierBench.o
+Building CXX object ~/intci/tobj/src/accel/EtaBatch.o
+Building CXX object ~/intci/tobj/src/bench/EtaBatchBench.o
+Building CXX object ~/intci/tobj/tests/test_dispatcher_radius.o
+Building CXX object ~/intci/tobj/tests/test_dispatcher.o
+Building CXX object ~/intci/tobj/src/Dispatcher.o
+Linking ~/intci/tbin/test_courier
+Linking ~/intci/tbin/test_breakdown
+Linking ~/intci/tbin/test_candidate_filter
+Linking ~/intci/tbin/test_city_subgraph
+Linking ~/intci/tbin/test_coverage_field
+Linking ~/intci/tbin/test_backend_select
+Linking ~/intci/tbin/test_bench_calib
+Linking ~/intci/tbin/test_bench_cli
+Linking ~/intci/tbin/test_bench_csv
+Linking ~/intci/tbin/test_bench_env
+Linking ~/intci/tbin/test_bench_runner
+Linking ~/intci/tbin/test_city_config
+Linking ~/intci/tbin/test_city_graph
+Linking ~/intci/tbin/test_courier_actor
+Linking ~/intci/tbin/test_courier_ride
+Linking ~/intci/tbin/test_delivery_histogram
+Linking ~/intci/tbin/test_dispatcher_radius
+Linking ~/intci/tbin/test_eta_batch
+Linking ~/intci/tbin/test_dispatcher
+Linking ~/intci/tbin/test_order
+Linking ~/intci/tbin/test_quote_pool
+Linking ~/intci/tbin/test_order_book
+Linking ~/intci/tbin/test_gpu_info
+Linking ~/intci/tbin/test_demand_heatmap
+Linking ~/intci/tbin/test_open_orders
+Linking ~/intci/tbin/test_order_factory
+Linking ~/intci/tbin/test_order_generator
+Linking ~/intci/tbin/test_quote
+Linking ~/intci/tbin/test_delivery_timeline
+Linking ~/intci/tbin/test_delivery_percentiles
+Linking ~/intci/tbin/test_gpu_worker
+Linking ~/intci/tbin/test_event_log
+Linking ~/intci/tbin/test_render
+Linking ~/intci/tbin/test_thread_pool
+Linking ~/intci/tbin/test_sim_clock
+Linking ~/intci/tbin/test_router
+Linking ~/intci/tbin/test_restaurant
+Linking ~/intci/tbin/test_thread_pool_limits
+Linking ~/intci/tbin/test_travel_time_table
+Linking ~/intci/tbin/test_best_courier
+Ejecutando 40 tests con -P 8, timeout 300s por test, desde ~/intci/src
+
+=== Resultado por test (6.6s en total) ===
+PASS    test_backend_select          0.0s
+PASS    test_bench_calib             0.1s
+PASS    test_bench_cli               0.0s
+PASS    test_bench_csv               0.0s
+PASS    test_bench_env               0.0s
+PASS    test_bench_runner            0.0s
+PASS    test_best_courier            0.0s
+PASS    test_breakdown               5.3s
+PASS    test_candidate_filter        0.1s
+PASS    test_city_config             6.4s
+PASS    test_city_graph              0.0s
+PASS    test_city_subgraph           0.3s
+PASS    test_courier                 0.0s
+PASS    test_courier_actor           0.5s
+PASS    test_courier_ride            1.3s
+PASS    test_coverage_field          1.2s
+PASS    test_delivery_histogram      0.0s
+PASS    test_delivery_percentiles    0.4s
+PASS    test_delivery_timeline       0.1s
+PASS    test_demand_heatmap          0.1s
+PASS    test_dispatcher              1.9s
+PASS    test_dispatcher_radius       3.1s
+PASS    test_eta_batch               0.0s
+PASS    test_event_log               0.2s
+PASS    test_gpu_info                0.0s
+PASS    test_gpu_worker              0.9s
+PASS    test_open_orders             0.0s
+PASS    test_order                   0.0s
+PASS    test_order_book              0.5s
+PASS    test_order_factory           0.1s
+PASS    test_order_generator         1.1s
+PASS    test_quote                   0.2s
+PASS    test_quote_pool              0.3s
+PASS    test_render                  3.0s
+PASS    test_restaurant              0.3s
+PASS    test_router                  0.4s
+PASS    test_sim_clock               0.2s
+PASS    test_thread_pool             0.0s
+PASS    test_thread_pool_limits      0.0s
+PASS    test_travel_time_table       0.3s
+TODAS LAS PRUEBAS PASARON (40)

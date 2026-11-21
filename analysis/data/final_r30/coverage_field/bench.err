@@ -1,0 +1,11 @@
+Backend: GPU CUDA "NVIDIA GeForce RTX 4050 Laptop GPU", cc 8.9, 6140 MiB
+[coverage_field] size=8 (10 versiones x 30 repeticiones)
+[coverage_field] size=16 (10 versiones x 30 repeticiones)
+[coverage_field] size=32 (10 versiones x 30 repeticiones)
+[coverage_field] size=64 (10 versiones x 30 repeticiones)
+[coverage_field] size=100 (10 versiones x 30 repeticiones)
+[coverage_field] size=128 (10 versiones x 30 repeticiones)
+[coverage_field] size=256 (10 versiones x 30 repeticiones)
+[coverage_field] size=512 (10 versiones x 30 repeticiones)
+[coverage_field] size=1024 (10 versiones x 30 repeticiones)
+Filas escritas: 2700, con correct=no: 0, corridas con error: 0

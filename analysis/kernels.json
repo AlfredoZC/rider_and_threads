@@ -1,0 +1,197 @@
+{
+  "schema": 2,
+  "doc": [
+    "Metadatos por aplicacion del CSV del bench (clave = valor de la columna 'application').",
+    "ops y bytes son FORMULAS en funcion de n (= la columna size), de 'params' y de 'size_vars' (variables que dependen",
+    "del tamano, con 'default' como formula); report_lib.eval_formula las evalua sin eval().",
+    "ops = operaciones aritmeticas del/los kernel(s) medidos en gpu_kernel (FLOP si op_type = fp32; operaciones enteras",
+    "si op_type = int32). bytes = trafico de memoria GLOBAL (lecturas + escrituras) con reuso ideal en cache: cada dato",
+    "cuenta una vez por pasada salvo que la derivacion diga otra cosa. Derivados del codigo del commit 098eb41",
+    "(src/accel/cuda/*.cu); la derivacion de cada uno esta en 'derivation'.",
+    "cpu_baselines: otras aplicaciones del CSV que resuelven la misma tarea en CPU (entran en la 'mejor CPU').",
+    "variant_of / baseline_for: variantes de comparacion y CPU de referencia (no son filas del resumen de 2.6).",
+    "scales: tamanos de operacion del proyecto (brief = config/equipetrol.json, ciudad = config/ciudad.json)."
+  ],
+  "apps": {
+    "calib_copy": {
+      "status": "measured", "counts_for_points": false, "concept": null, "ordinal": null,
+      "title": "Calibración: ancho de banda de copia (memcpy, H2D/D2H paginable, VRAM)",
+      "size_unit": "bytes", "size_meaning": "bytes copiados por corrida",
+      "kernel": "copia dispositivo→dispositivo (src/accel/cuda/Calib.cu)", "op_type": "none", "params": {},
+      "ops": "0", "bytes": "2*n",
+      "derivation": "Cada byte se lee una vez de la VRAM y se escribe una vez: 2n bytes y ninguna operación. Da el techo MEDIDO de memoria (mayor tamaño, que no cabe en la L2).",
+      "scales": null
+    },
+    "calib_launch": {
+      "status": "measured", "counts_for_points": false, "concept": null, "ordinal": null,
+      "title": "Calibración: latencia de lanzamiento de kernel vs despacho del pool",
+      "size_unit": "lanzamientos", "size_meaning": "N lanzamientos (GPU) o N llamadas/despachos (CPU)",
+      "kernel": "kernel de un hilo que suma 1 a un contador", "op_type": "int32", "params": {},
+      "ops": "0", "bytes": "0",
+      "derivation": "Mide overhead, no cómputo: no va al roofline.",
+      "scales": null
+    },
+    "apsp_floyd": {
+      "status": "measured", "counts_for_points": true, "concept": "03_memory_tiling", "ordinal": 1,
+      "title": "Tabla de tiempos entre todos los pares: Floyd-Warshall por tiles de 32 × 32 en memoria compartida",
+      "size_unit": "nodos", "size_meaning": "n = nodos del subgrafo conexo de la ciudad real (la tabla tiene n² celdas)",
+      "kernel": "floydWarshallPhase1/2/3 (TravelTimeTable.cu), 3 lanzamientos por tile pivote", "op_type": "int32",
+      "params": {"T": 32}, "cpu_baselines": ["apsp_dijkstra"],
+      "ops": "2*(ceil(n/T)*T)**3",
+      "bytes": "16*(ceil(n/T)*T)**3/T",
+      "derivation": "La tabla se rellena a N = ⌈n/32⌉·32. Por cada (pivote k, i, j) hay una suma y un mínimo enteros: 2N³ operaciones. Por tile pivote (N/T rondas) la fase 3, que domina, lanza (N/T − 1)² bloques que leen su celda, el tile de su fila y el de su columna (en shared) y escriben su celda: 4 × 4 B por celda = 16N² B por ronda; las fases 1 y 2 suman O(N·T) y se desprecian. Total 16N³/T B: intensidad T/8 = 4 op/B (sin tiles serían 16N³ B, 1/8 op/B).",
+      "scales": {"brief": 668, "ciudad": 3741}
+    },
+    "apsp_dijkstra": {
+      "status": "measured", "counts_for_points": false, "concept": "03_memory_tiling", "ordinal": null,
+      "baseline_for": "apsp_floyd",
+      "title": "Mejor CPU honesta de la aplicación 03: Dijkstra desde cada nodo (solo CPU)",
+      "size_unit": "nodos", "size_meaning": "n = nodos del subgrafo", "op_type": "none", "params": {},
+      "ops": "0", "bytes": "0", "derivation": "Solo CPU: no va al roofline.", "scales": null
+    },
+    "eta_batch_soa": {
+      "status": "measured", "counts_for_points": true, "concept": "04_performance", "ordinal": 1,
+      "title": "ETA en lote, matriz pedidos × couriers, couriers en estructura de arreglos (SoA, lecturas coalescidas)",
+      "size_unit": "couriers", "size_meaning": "n = couriers (columnas); m pedidos (filas): 50→10, 150→30, 500→100, 2000→300, 5000→600, otro → n/8",
+      "kernel": "computeEtaSoA (EtaBatch.cu), un hilo por par (pedido, courier), bloques de 256", "op_type": "int32",
+      "params": {}, "size_vars": {"m": {"50": 10, "150": 30, "500": 100, "2000": 300, "5000": 600, "default": "max(1, floor(n/8))"}},
+      "ops": "8*n*m",
+      "bytes": "12*n*m",
+      "derivation": "etaForPair (EtaFormula.h) por par: 2 índices de la tabla (2 IMAD), llegada = libre + viaje, recogida = max(llegada, listo), ETA = recogida + viaje, y 3 comparaciones contra 'inalcanzable': ≈ 8 operaciones enteras. Bytes con el modelo del propio bench (describe): por par se leen nodo y hora libre del courier (8 B) y se escribe la ETA (4 B) = 12 B; las dos lecturas de la tabla de tiempos (la del restaurante→cliente es la misma para todo el bloque) se suponen en caché, así que el tráfico real a DRAM puede ser mayor.",
+      "scales": {"brief": 3, "ciudad": 2000}
+    },
+    "eta_batch_aos": {
+      "status": "measured", "counts_for_points": false, "concept": "04_performance", "ordinal": null,
+      "variant_of": "eta_batch_soa", "cpu_baselines": ["eta_batch_soa"],
+      "title": "Variante de comparación: los mismos pares con couriers en arreglo de estructuras (AoS, registros de 32 B)",
+      "size_unit": "couriers", "size_meaning": "igual que eta_batch_soa",
+      "kernel": "computeEtaAoS (EtaBatch.cu)", "op_type": "int32",
+      "params": {}, "size_vars": {"m": {"50": 10, "150": 30, "500": 100, "2000": 300, "5000": 600, "default": "max(1, floor(n/8))"}},
+      "ops": "8*n*m",
+      "bytes": "36*n*m",
+      "derivation": "Mismas operaciones que SoA; cada hilo usa 8 de los 32 B del registro, así que un warp trae 32 × 32 B en vez de 32 × 8 B: 32 + 4 = 36 B por par (modelo del bench).",
+      "scales": null
+    },
+    "demand_heatmap": {
+      "status": "measured", "counts_for_points": true, "concept": "05_conv", "ordinal": 1,
+      "title": "Mapa de calor de la demanda: convolución 2D con filtro gaussiano 7 × 7 en memoria constante",
+      "size_unit": "celdas por lado", "size_meaning": "n = lado de la grilla (n × n celdas)",
+      "kernel": "smoothDemandKernel (DemandHeatmap.cu), bloques de 16 × 16, un hilo por celda", "op_type": "fp32",
+      "params": {"K": 7}, "ops": "2*K**2*n**2", "bytes": "8*n**2",
+      "derivation": "Cada celda hace K² = 49 productos y sumas (una FMA = 2 FLOP): 98n² FLOP (las celdas del borde hacen menos; se desprecia). Con reuso ideal en L1/L2 cada celda de entrada se lee una vez de DRAM (4 B) y la salida se escribe una vez (4 B): 8n² B; el filtro está en memoria constante. Intensidad 12,25 FLOP/B.",
+      "scales": {"programa (grilla de la ventana)": 128}
+    },
+    "demand_heatmap_tiles": {
+      "status": "measured", "counts_for_points": false, "concept": "05_conv", "ordinal": null,
+      "variant_of": "demand_heatmap", "cpu_baselines": ["demand_heatmap"],
+      "title": "Variante de comparación: el mismo filtro con tile de 16 × 16 + halo en memoria compartida",
+      "size_unit": "celdas por lado", "size_meaning": "n = lado de la grilla",
+      "kernel": "smoothDemandTiledKernel (DemandHeatmap.cu)", "op_type": "fp32",
+      "params": {"K": 7, "B": 16}, "ops": "2*K**2*n**2", "bytes": "4*n**2*((B+K-1)/B)**2 + 4*n**2",
+      "derivation": "Mismas operaciones. Cada bloque lee su tile con halo ((16+6)² celdas por 16² de salida, 1,89×) y escribe una vez.",
+      "scales": null
+    },
+    "coverage_field": {
+      "status": "measured", "counts_for_points": true, "concept": "06_stencil", "ordinal": 1,
+      "title": "Campo de cobertura de la flota: stencil de 5 puntos, 200 barridos de Jacobi con doble buffer",
+      "size_unit": "celdas por lado", "size_meaning": "n = lado de la grilla (n × n celdas), 200 barridos",
+      "kernel": "coverageJacobiStep (CoverageField.cu), bloques de 16 × 16, un lanzamiento por barrido", "op_type": "fp32",
+      "params": {"S": 200}, "ops": "4*S*n**2", "bytes": "12*S*n**2",
+      "derivation": "Por celda interior y barrido: 0,25 × (izq + der + arriba + abajo) = 3 sumas + 1 producto = 4 FLOP (fuentes y borde no calculan; se desprecia). Con reuso ideal de los vecinos en caché, cada barrido lee el campo anterior (4 B) y la grilla de couriers (4 B) y escribe el nuevo (4 B): 12 B por celda. Intensidad 1/3 FLOP/B: limitado por memoria; en grillas chicas, por los 200 lanzamientos.",
+      "scales": {"programa (grilla de la ventana)": 128}
+    },
+    "delivery_histogram": {
+      "status": "measured", "counts_for_points": true, "concept": "07_histogram", "ordinal": 1,
+      "title": "Histograma de tiempos de entrega por minuto (61 barras) con privatización en memoria compartida",
+      "size_unit": "entregas", "size_meaning": "n = tiempos de entrega",
+      "kernel": "histogramPrivatizedKernel (DeliveryHistogram.cu), bloques de 256, bucle de rejilla", "op_type": "int32",
+      "params": {}, "ops": "4*n", "bytes": "4*n",
+      "derivation": "Por entrega: calcular la barra (división por 60 000 y tope de desborde, ≈ 3 operaciones) + atomicAdd en shared (1): 4n operaciones enteras. Se lee cada tiempo una vez (4 B); las 61 sumas globales por bloque son despreciables. Intensidad 1 op/B.",
+      "scales": null
+    },
+    "histogram_naive": {
+      "status": "measured", "counts_for_points": false, "concept": "07_histogram", "ordinal": null,
+      "variant_of": "delivery_histogram", "cpu_baselines": ["delivery_histogram"],
+      "title": "Variante de comparación: un atomicAdd GLOBAL por entrega sobre las mismas 61 barras",
+      "size_unit": "entregas", "size_meaning": "n = tiempos de entrega",
+      "kernel": "histogramGlobalAtomicsKernel (DeliveryHistogram.cu)", "op_type": "int32",
+      "params": {}, "ops": "4*n", "bytes": "4*n",
+      "derivation": "Mismas operaciones y lecturas; los n atómicos van a 61 direcciones de la L2 (contención, no tráfico de DRAM).",
+      "scales": null
+    },
+    "best_courier": {
+      "status": "measured", "counts_for_points": true, "concept": "08_reduction", "ordinal": 1,
+      "title": "Mejor courier de cada pedido: argmin por fila de la matriz de ETA (árbol de reducción convergente)",
+      "size_unit": "couriers", "size_meaning": "n = couriers (columnas); m pedidos como en eta_batch",
+      "kernel": "bestCourierConvergent (BestCourier.cu), un bloque de 256 por pedido", "op_type": "int32",
+      "params": {}, "size_vars": {"m": {"50": 10, "150": 30, "500": 100, "2000": 300, "5000": 600, "default": "max(1, floor(n/8))"}},
+      "ops": "4*n*m", "bytes": "8*n*m + 8*m",
+      "derivation": "Por celda: empaquetar (ETA, id) en una clave de 64 bits (desplazamiento + o, 2 operaciones) y quedarse con la menor (comparación de 64 bits, ≈ 2): 4 operaciones enteras; el árbol del bloque agrega 255 por pedido (despreciable). Lee ETA e id de cada celda (4 + 4 B; los ids se releen por pedido, desde L2) y escribe una clave de 8 B por pedido.",
+      "scales": {"brief": 3, "ciudad": 2000}
+    },
+    "best_courier_divergent": {
+      "status": "measured", "counts_for_points": false, "concept": "08_reduction", "ordinal": null,
+      "variant_of": "best_courier", "cpu_baselines": ["best_courier"],
+      "title": "Variante de comparación: árbol que empareja vecinos (threadIdx % 2·stride: warps divergentes)",
+      "size_unit": "couriers", "size_meaning": "igual que best_courier",
+      "kernel": "bestCourierDivergent (BestCourier.cu)", "op_type": "int32",
+      "params": {}, "size_vars": {"m": {"50": 10, "150": 30, "500": 100, "2000": 300, "5000": 600, "default": "max(1, floor(n/8))"}},
+      "ops": "4*n*m", "bytes": "8*n*m + 8*m",
+      "derivation": "Mismas operaciones y bytes; cambia qué hilos quedan activos en el árbol.",
+      "scales": null
+    },
+    "orders_in_progress": {
+      "status": "measured", "counts_for_points": true, "concept": "09_scan", "ordinal": 1,
+      "title": "Pedidos en curso a lo largo del tiempo y su pico: scan inclusivo jerárquico (Kogge-Stone) + máximo",
+      "size_unit": "eventos", "size_meaning": "n = eventos (+1 pedido creado, −1 entregado o rechazado)",
+      "kernel": "scanBlockKoggeStone (bloques de 512) + addPreviousBlocksTotal + peakOfRunningTotal (Scan.cu, OpenOrders.cu)",
+      "op_type": "int32", "params": {}, "ops": "12*n", "bytes": "20*n",
+      "derivation": "Kogge-Stone en bloques de 512: en el paso de distancia d suman 512 − d hilos, Σ = 9·512 − 511 ≈ 8 sumas por elemento (trabajo O(n log n) del bloque); sumar el total de los bloques previos, 1; pico (empaquetar clave + máximo), ≈ 3: 12n operaciones. Bytes: el scan lee y escribe (8n), la corrección lee y escribe (8n) y el pico lee (4n): 20n; el scan de los totales de bloque es despreciable.",
+      "scales": null
+    },
+    "candidate_filter": {
+      "status": "measured", "counts_for_points": true, "concept": "10_filter", "ordinal": 1,
+      "title": "Poda de couriers candidatos antes de cotizar: compactación con lista privada por bloque",
+      "size_unit": "couriers", "size_meaning": "n = couriers de la flota",
+      "kernel": "filterCandidatesBlockPrivate (CandidateFilter.cu), bloques de 256", "op_type": "int32",
+      "params": {"p": 0.175}, "ops": "3*n + p*n", "bytes": "9*n + 4*p*n",
+      "derivation": "Por courier: ¿disponible? (1), índice en la tabla (1 IMAD), ¿tiempo ≤ radio? (1) y, para los p·n que pasan, un atomicAdd en shared. Lee disponibilidad (1 B), nodo (4 B) y un tiempo de la tabla (4 B, acceso disperso) y escribe 4 B por candidato. p ≈ 0,7 disponibles × 0,25 (radio = percentil 25) = 0,175.",
+      "scales": {"brief": 3, "ciudad": 2000}
+    },
+    "candidate_filter_naive": {
+      "status": "measured", "counts_for_points": false, "concept": "10_filter", "ordinal": null,
+      "variant_of": "candidate_filter", "cpu_baselines": ["candidate_filter"],
+      "title": "Variante de comparación: un atomicAdd GLOBAL por candidato sobre un único contador",
+      "size_unit": "couriers", "size_meaning": "n = couriers",
+      "kernel": "filterCandidatesNaive (CandidateFilter.cu)", "op_type": "int32",
+      "params": {"p": 0.175}, "ops": "3*n + p*n", "bytes": "9*n + 4*p*n",
+      "derivation": "Mismas operaciones y bytes; los p·n atómicos van al MISMO contador global.",
+      "scales": null
+    },
+    "delivery_timeline": {
+      "status": "measured", "counts_for_points": true, "concept": "11_merge", "ordinal": 1,
+      "title": "Línea de tiempo global de entregas: fusión por pares (co-rank) de las listas ordenadas de 2000 couriers",
+      "size_unit": "entregas", "size_meaning": "n = entregas totales, repartidas en 2000 listas",
+      "kernel": "mergeRound (11 rondas, 4 salidas por hilo) + deliveriesPerBucket (DeliveryTimeline.cu)", "op_type": "int32",
+      "params": {"R": 11}, "ops": "R*(n + 0.5*n*log2(n))", "bytes": "R*(16*n + 4*n*log2(n))",
+      "derivation": "⌈log2 2000⌉ = 11 rondas de fusión por pares. Por ronda cada registro de 8 B se lee y se escribe una vez (16n B) con una comparación por salida (n); cada hilo (4 salidas) hace 2 búsquedas co-rank de ≤ log2 n pasos que leen 8 B y comparan: n/4 · 2 · log2 n ≈ 0,5·n·log2 n comparaciones y 4·n·log2 n B. El conteo por hora (24 búsquedas binarias) es despreciable. Cota superior: las listas de las primeras rondas son cortas.",
+      "scales": null
+    },
+    "delivery_percentiles": {
+      "status": "measured", "counts_for_points": true, "concept": "12_sorting", "ordinal": 1,
+      "title": "Percentiles p50, p90 y p99 del tiempo de entrega: radix sort de 1 bit por pasada",
+      "size_unit": "entregas", "size_meaning": "n = tiempos de entrega (ms, claves de 32 bits)",
+      "kernel": "por bit: markZeroBit + scan (Kogge-Stone) + radixScatter (DeliveryPercentiles.cu)", "op_type": "int32",
+      "params": {"P": 25}, "ops": "17*P*n", "bytes": "40*P*n",
+      "derivation": "Una pasada por bit significativo del máximo: con la distribución del bench (mediana 28 min, σ = 0,45) el máximo ronda 2^24-2^25 ms, P ≈ 25 pasadas. Por pasada y clave: marcar el bit (desplazar, enmascarar, comparar: 3 ops; lee 4 B y escribe 4 B), scan de las marcas (≈ 9 ops, 16 B como en la app 09) y reubicar (≈ 5 ops; lee clave, marca y suma: 12 B, escribe 4 B): 17 ops y 40 B por clave y pasada.",
+      "scales": null
+    },
+    "demo_sintetica": {
+      "status": "synthetic", "counts_for_points": false, "concept": "99_sintetico", "ordinal": null,
+      "title": "Aplicación ficticia (datos sintéticos para probar el pipeline)",
+      "size_unit": "elementos", "size_meaning": "n = elementos (ficticio)", "op_type": "fp32", "params": {},
+      "ops": "2*n", "bytes": "4*n", "derivation": "Ficticio: 2 FLOP y 4 bytes por elemento.",
+      "scales": {"brief": 1000, "ciudad": 1000000}
+    }
+  }
+}

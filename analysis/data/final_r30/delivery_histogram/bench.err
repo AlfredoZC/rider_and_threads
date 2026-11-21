@@ -1,0 +1,12 @@
+Backend: GPU CUDA "NVIDIA GeForce RTX 4050 Laptop GPU", cc 8.9, 6140 MiB
+[delivery_histogram] size=1000 (10 versiones x 30 repeticiones)
+[delivery_histogram] size=10000 (10 versiones x 30 repeticiones)
+[delivery_histogram] size=100000 (10 versiones x 30 repeticiones)
+[delivery_histogram] size=1000000 (10 versiones x 30 repeticiones)
+[delivery_histogram] size=10000000 (10 versiones x 30 repeticiones)
+[histogram_naive] size=1000 (2 versiones x 30 repeticiones)
+[histogram_naive] size=10000 (2 versiones x 30 repeticiones)
+[histogram_naive] size=100000 (2 versiones x 30 repeticiones)
+[histogram_naive] size=1000000 (2 versiones x 30 repeticiones)
+[histogram_naive] size=10000000 (2 versiones x 30 repeticiones)
+Filas escritas: 1800, con correct=no: 0, corridas con error: 0

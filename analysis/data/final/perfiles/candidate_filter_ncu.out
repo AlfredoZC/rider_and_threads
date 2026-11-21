@@ -1,0 +1,7 @@
+==PROF== Connected to process 20706 (~/intci/build-cuda/delivery_sim)
+Backend: GPU CUDA "NVIDIA GeForce RTX 4050 Laptop GPU", cc 8.9, 6140 MiB
+==PROF== Profiling "filterCandidatesBlockPrivate": 0%....50%....100% - 40 passes
+application,version,size,rep,ms,correct,threads,seed,h2d_ms,kernel_ms,d2h_ms
+candidate_filter,gpu_e2e,200000,0,977.939542,yes,1,12345,6.956800,971.474182,0.202624
+==PROF== Disconnected from process 20706
+==PROF== Report: ~/ec2inf/perfiles/candidate_filter_ncu.ncu-rep

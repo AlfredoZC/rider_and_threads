@@ -1,0 +1,7 @@
+==PROF== Connected to process 21315 (~/intci/build-cuda/delivery_sim)
+Backend: GPU CUDA "NVIDIA GeForce RTX 4050 Laptop GPU", cc 8.9, 6140 MiB
+==PROF== Profiling "radixScatter": 0%....50%....100% - 40 passes
+application,version,size,rep,ms,correct,threads,seed,h2d_ms,kernel_ms,d2h_ms
+delivery_percentiles,gpu_e2e,10000000,0,1094.786322,yes,1,12345,4.299712,1083.445557,4.436992
+==PROF== Disconnected from process 21315
+==PROF== Report: ~/ec2inf/perfiles/delivery_percentiles_ncu.ncu-rep

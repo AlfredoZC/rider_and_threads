@@ -1,0 +1,7 @@
+Backend: GPU CUDA "NVIDIA GeForce RTX 4050 Laptop GPU", cc 8.9, 6140 MiB
+[delivery_timeline] size=1000 (10 versiones x 10 repeticiones)
+[delivery_timeline] size=10000 (10 versiones x 10 repeticiones)
+[delivery_timeline] size=100000 (10 versiones x 10 repeticiones)
+[delivery_timeline] size=1000000 (10 versiones x 10 repeticiones)
+[delivery_timeline] size=10000000 (10 versiones x 10 repeticiones)
+Filas escritas: 500, con correct=no: 0, corridas con error: 0

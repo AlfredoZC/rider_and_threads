@@ -1,0 +1,34 @@
+WARNING: Device-side CUDA Event completion trace is currently enabled.
+         This may increase runtime overhead and the likelihood of false
+         dependencies across CUDA Streams. If you wish to avoid this, please
+         disable the feature with --cuda-event-trace=false.
+Backend: GPU CUDA "NVIDIA GeForce RTX 4050 Laptop GPU", cc 8.9, 6140 MiB
+application,version,size,rep,ms,correct,threads,seed,h2d_ms,kernel_ms,d2h_ms
+coverage_field,gpu_e2e,1024,0,8.974801,yes,1,12345,0.529408,7.377920,0.594464
+Collecting data...
+Generating '/tmp/nsys-report-7940.qdstrm'
+
+[1/1] [0%                          ] coverage_field_nsys.nsys-rep
+[1/1] [0%                          ] coverage_field_nsys.nsys-rep
+[1/1] [===24%                      ] coverage_field_nsys.nsys-rep
+[1/1] [====25%                     ] coverage_field_nsys.nsys-rep
+[1/1] [====27%                     ] coverage_field_nsys.nsys-rep
+[1/1] [====28%                     ] coverage_field_nsys.nsys-rep
+[1/1] [=====30%                    ] coverage_field_nsys.nsys-rep
+[1/1] [=====31%                    ] coverage_field_nsys.nsys-rep
+[1/1] [=====32%                    ] coverage_field_nsys.nsys-rep
+[1/1] [======33%                   ] coverage_field_nsys.nsys-rep
+[1/1] [======34%                   ] coverage_field_nsys.nsys-rep
+[1/1] [======35%                   ] coverage_field_nsys.nsys-rep
+[1/1] [=======36%                  ] coverage_field_nsys.nsys-rep
+[1/1] [=======37%                  ] coverage_field_nsys.nsys-rep
+[1/1] [=======38%                  ] coverage_field_nsys.nsys-rep
+[1/1] [=======39%                  ] coverage_field_nsys.nsys-rep
+[1/1] [========40%                 ] coverage_field_nsys.nsys-rep
+[1/1] [========42%                 ] coverage_field_nsys.nsys-rep
+[1/1] [=============59%            ] coverage_field_nsys.nsys-rep
+[1/1] [==================76%       ] coverage_field_nsys.nsys-rep
+[1/1] [========================100%] coverage_field_nsys.nsys-rep
+[1/1] [========================100%] coverage_field_nsys.nsys-rep
+Generated:
+	~/ec2inf/perfiles/coverage_field_nsys.nsys-rep
