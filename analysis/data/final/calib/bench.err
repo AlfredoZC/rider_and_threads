@@ -1,0 +1,13 @@
+Backend: GPU CUDA "NVIDIA GeForce RTX 4050 Laptop GPU", cc 8.9, 6140 MiB
+[calib_copy] size=4096 (10 versiones x 10 repeticiones)
+[calib_copy] size=65536 (10 versiones x 10 repeticiones)
+[calib_copy] size=1048576 (10 versiones x 10 repeticiones)
+[calib_copy] size=16777216 (10 versiones x 10 repeticiones)
+[calib_copy] size=67108864 (10 versiones x 10 repeticiones)
+[calib_copy] size=268435456 (10 versiones x 10 repeticiones)
+[calib_launch] size=1 (10 versiones x 10 repeticiones)
+[calib_launch] size=10 (10 versiones x 10 repeticiones)
+[calib_launch] size=100 (10 versiones x 10 repeticiones)
+[calib_launch] size=1000 (10 versiones x 10 repeticiones)
+[calib_launch] size=10000 (10 versiones x 10 repeticiones)
+Filas escritas: 1100, con correct=no: 0, corridas con error: 0

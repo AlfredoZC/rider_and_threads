@@ -1,0 +1,111 @@
+application            size version     threads    n    median_ms       min_ms       max_ms  derived (from the median)
+calib_copy             4096 cpu1              1   30     0.000272     0.000192     0.000659  15.09 GB/stats copied (memcpy)
+calib_copy             4096 cpuN              1   30     0.001406     0.000706     0.002852  2.91 GB/stats copied (memcpy)
+calib_copy             4096 cpuN              2   30     0.077665     0.043952     0.133932  0.05 GB/stats copied (memcpy)
+calib_copy             4096 cpuN              4   30     0.113612     0.066971     0.204137  0.04 GB/stats copied (memcpy)
+calib_copy             4096 cpuN              6   30     0.147670     0.094235     0.280308  0.03 GB/stats copied (memcpy)
+calib_copy             4096 cpuN              8   30     0.176999     0.109876     0.370504  0.02 GB/stats copied (memcpy)
+calib_copy             4096 cpuN             12   30     0.221623     0.147844     0.470763  0.02 GB/stats copied (memcpy)
+calib_copy             4096 cpuN             16   30     0.274164     0.192840     0.529138  0.01 GB/stats copied (memcpy)
+calib_copy             4096 gpu_kernel        1   30     0.009536     0.003872     0.169920  0.43 GB/stats copied = 0.86 GB/stats of VRAM traffic (read+write)
+calib_copy             4096 gpu_e2e           1   30     0.291230     0.190332     0.580195  H2D 0.06 GB/stats, D2H 0.05 GB/stats, round trip 0.03 GB/stats (pageable)
+calib_copy            65536 cpu1              1   30     0.002170     0.001746     0.015674  30.20 GB/stats copied (memcpy)
+calib_copy            65536 cpuN              1   30     0.002645     0.002289     0.012264  24.77 GB/stats copied (memcpy)
+calib_copy            65536 cpuN              2   30     0.049841     0.039412     0.100584  1.31 GB/stats copied (memcpy)
+calib_copy            65536 cpuN              4   30     0.088280     0.054490     0.137668  0.74 GB/stats copied (memcpy)
+calib_copy            65536 cpuN              6   30     0.106487     0.076879     0.329524  0.62 GB/stats copied (memcpy)
+calib_copy            65536 cpuN              8   30     0.117925     0.094106     0.315096  0.56 GB/stats copied (memcpy)
+calib_copy            65536 cpuN             12   30     0.157006     0.128213     0.351507  0.42 GB/stats copied (memcpy)
+calib_copy            65536 cpuN             16   30     0.198114     0.165207     0.464201  0.33 GB/stats copied (memcpy)
+calib_copy            65536 gpu_kernel        1   30     0.006144     0.003904     0.093952  10.67 GB/stats copied = 21.33 GB/stats of VRAM traffic (read+write)
+calib_copy            65536 gpu_e2e           1   30     0.193186     0.135107     0.350999  H2D 1.39 GB/stats, D2H 1.05 GB/stats, round trip 0.68 GB/stats (pageable)
+calib_copy          1048576 cpu1              1   30     0.046030     0.041662     0.059205  22.78 GB/stats copied (memcpy)
+calib_copy          1048576 cpuN              1   30     0.043327     0.041533     0.057021  24.20 GB/stats copied (memcpy)
+calib_copy          1048576 cpuN              2   30     0.076049     0.061247     0.118903  13.79 GB/stats copied (memcpy)
+calib_copy          1048576 cpuN              4   30     0.101702     0.074347     0.264249  10.31 GB/stats copied (memcpy)
+calib_copy          1048576 cpuN              6   30     0.125816     0.086599     0.229987  8.33 GB/stats copied (memcpy)
+calib_copy          1048576 cpuN              8   30     0.127973     0.097174     0.260695  8.19 GB/stats copied (memcpy)
+calib_copy          1048576 cpuN             12   30     0.187767     0.130146     0.288443  5.58 GB/stats copied (memcpy)
+calib_copy          1048576 cpuN             16   30     0.187313     0.156954     0.285718  5.60 GB/stats copied (memcpy)
+calib_copy          1048576 gpu_kernel        1   30     0.006144     0.005120     0.179200  170.67 GB/stats copied = 341.33 GB/stats of VRAM traffic (read+write)
+calib_copy          1048576 gpu_e2e           1   30     0.456050     0.376638     0.674890  H2D 6.75 GB/stats, D2H 5.51 GB/stats, round trip 4.60 GB/stats (pageable)
+calib_copy         16777216 cpu1              1   30     1.043438     0.847858     1.232905  16.08 GB/stats copied (memcpy)
+calib_copy         16777216 cpuN              1   30     1.027187     0.859356     1.549763  16.33 GB/stats copied (memcpy)
+calib_copy         16777216 cpuN              2   30     0.971676     0.761770     2.148218  17.27 GB/stats copied (memcpy)
+calib_copy         16777216 cpuN              4   30     0.714584     0.579211     1.843965  23.48 GB/stats copied (memcpy)
+calib_copy         16777216 cpuN              6   30     0.939976     0.577249     1.628086  17.85 GB/stats copied (memcpy)
+calib_copy         16777216 cpuN              8   30     0.846303     0.603533     1.087475  19.82 GB/stats copied (memcpy)
+calib_copy         16777216 cpuN             12   30     0.768730     0.562655     1.024089  21.82 GB/stats copied (memcpy)
+calib_copy         16777216 cpuN             16   30     0.716020     0.584725     1.095596  23.43 GB/stats copied (memcpy)
+calib_copy         16777216 gpu_kernel        1   30     0.195584     0.193536     0.242688  85.78 GB/stats copied = 171.56 GB/stats of VRAM traffic (read+write)
+calib_copy         16777216 gpu_e2e           1   30     3.687057     3.277360     5.818851  H2D 9.27 GB/stats, D2H 9.65 GB/stats, round trip 9.10 GB/stats (pageable)
+calib_copy         67108864 cpu1              1   30     3.959059     3.794884     6.205721  16.95 GB/stats copied (memcpy)
+calib_copy         67108864 cpuN              1   30     3.972639     3.733691     5.639161  16.89 GB/stats copied (memcpy)
+calib_copy         67108864 cpuN              2   30     2.974324     2.798814     3.496850  22.56 GB/stats copied (memcpy)
+calib_copy         67108864 cpuN              4   30     2.796686     2.620446     3.439264  24.00 GB/stats copied (memcpy)
+calib_copy         67108864 cpuN              6   30     3.298640     2.895006     3.801672  20.34 GB/stats copied (memcpy)
+calib_copy         67108864 cpuN              8   30     3.244789     2.908043     3.766502  20.68 GB/stats copied (memcpy)
+calib_copy         67108864 cpuN             12   30     3.100550     2.869690     3.886995  21.64 GB/stats copied (memcpy)
+calib_copy         67108864 cpuN             16   30     3.034170     2.849503     3.247563  22.12 GB/stats copied (memcpy)
+calib_copy         67108864 gpu_kernel        1   30     0.783872     0.774144     0.789536  85.61 GB/stats copied = 171.22 GB/stats of VRAM traffic (read+write)
+calib_copy         67108864 gpu_e2e           1   30    13.384434    12.469848    17.627392  H2D 10.04 GB/stats, D2H 10.51 GB/stats, round trip 10.03 GB/stats (pageable)
+calib_copy        268435456 cpu1              1   30    12.599367    12.195615    18.720904  21.31 GB/stats copied (memcpy)
+calib_copy        268435456 cpuN              1   30    12.610257    12.058765    18.451818  21.29 GB/stats copied (memcpy)
+calib_copy        268435456 cpuN              2   30    10.970443    10.432831    13.414304  24.47 GB/stats copied (memcpy)
+calib_copy        268435456 cpuN              4   30    10.328567     9.937972    12.370719  25.99 GB/stats copied (memcpy)
+calib_copy        268435456 cpuN              6   30    10.017330     9.455846    12.683499  26.80 GB/stats copied (memcpy)
+calib_copy        268435456 cpuN              8   30     9.885628     9.567014    10.537206  27.15 GB/stats copied (memcpy)
+calib_copy        268435456 cpuN             12   30     9.673682     9.399504    10.701596  27.75 GB/stats copied (memcpy)
+calib_copy        268435456 cpuN             16   30     9.667587     9.407393    11.835758  27.77 GB/stats copied (memcpy)
+calib_copy        268435456 gpu_kernel        1   30     3.125248     3.093504     3.138560  85.89 GB/stats copied = 171.79 GB/stats of VRAM traffic (read+write)
+calib_copy        268435456 gpu_e2e           1   30    51.112081    47.760264    75.650352  H2D 10.59 GB/stats, D2H 10.72 GB/stats, round trip 10.50 GB/stats (pageable)
+calib_launch              1 cpu1              1   30     0.000126     0.000063     0.000394  0.126 us per launch/dispatch
+calib_launch              1 cpuN              1   30     0.000749     0.000317     0.001687  0.749 us per launch/dispatch
+calib_launch              1 cpuN              2   30     0.043632     0.032440     0.089096  43.632 us per launch/dispatch
+calib_launch              1 cpuN              4   30     0.084150     0.049461     0.157805  84.150 us per launch/dispatch
+calib_launch              1 cpuN              6   30     0.100199     0.066766     0.204321  100.200 us per launch/dispatch
+calib_launch              1 cpuN              8   30     0.102670     0.082856     0.204265  102.671 us per launch/dispatch
+calib_launch              1 cpuN             12   30     0.164988     0.112908     0.278943  164.988 us per launch/dispatch
+calib_launch              1 cpuN             16   30     0.159357     0.144311     0.418279  159.357 us per launch/dispatch
+calib_launch              1 gpu_kernel        1   30     0.004624     0.003072     0.117760  4.624 us per launch/dispatch
+calib_launch              1 gpu_e2e           1   30     0.061215     0.044789     0.127692  61.215 us per launch/dispatch
+calib_launch             10 cpu1              1   30     0.000170     0.000102     0.001136  0.017 us per launch/dispatch
+calib_launch             10 cpuN              1   30     0.001142     0.000923     0.001438  0.114 us per launch/dispatch
+calib_launch             10 cpuN              2   30     0.329356     0.280539     0.574401  32.936 us per launch/dispatch
+calib_launch             10 cpuN              4   30     0.526725     0.430503     0.782828  52.672 us per launch/dispatch
+calib_launch             10 cpuN              6   30     0.720731     0.615250     1.394271  72.073 us per launch/dispatch
+calib_launch             10 cpuN              8   30     0.926341     0.782287     1.285377  92.634 us per launch/dispatch
+calib_launch             10 cpuN             12   30     1.248067     1.098941     1.600847  124.807 us per launch/dispatch
+calib_launch             10 cpuN             16   30     1.581608     1.399934     1.847044  158.161 us per launch/dispatch
+calib_launch             10 gpu_kernel        1   30     0.077856     0.045792     0.190464  7.786 us per launch/dispatch
+calib_launch             10 gpu_e2e           1   30     0.266405     0.217783     0.544239  26.641 us per launch/dispatch
+calib_launch            100 cpu1              1   30     0.000322     0.000295     0.000529  0.003 us per launch/dispatch
+calib_launch            100 cpuN              1   30     0.005527     0.005322     0.043084  0.055 us per launch/dispatch
+calib_launch            100 cpuN              2   30     3.107192     2.760397     5.078143  31.072 us per launch/dispatch
+calib_launch            100 cpuN              4   30     4.899145     4.550303     9.191576  48.991 us per launch/dispatch
+calib_launch            100 cpuN              6   30     6.932513     6.284261    17.284130  69.325 us per launch/dispatch
+calib_launch            100 cpuN              8   30     8.308686     7.774441    12.297111  83.087 us per launch/dispatch
+calib_launch            100 cpuN             12   30    11.688815    10.970714    13.662910  116.888 us per launch/dispatch
+calib_launch            100 cpuN             16   30    14.771290    14.147929    19.261373  147.713 us per launch/dispatch
+calib_launch            100 gpu_kernel        1   30     0.634960     0.539648     1.468416  6.350 us per launch/dispatch
+calib_launch            100 gpu_e2e           1   30     2.156233     1.967880     4.441890  21.562 us per launch/dispatch
+calib_launch           1000 cpu1              1   30     0.001564     0.001417     0.005554  0.002 us per launch/dispatch
+calib_launch           1000 cpuN              1   30     0.047836     0.045509     0.065734  0.048 us per launch/dispatch
+calib_launch           1000 cpuN              2   30    31.043774    29.114092    44.849550  31.044 us per launch/dispatch
+calib_launch           1000 cpuN              4   30    48.535303    45.503030    82.436876  48.535 us per launch/dispatch
+calib_launch           1000 cpuN              6   30    65.451133    62.329334   104.458966  65.451 us per launch/dispatch
+calib_launch           1000 cpuN              8   30    81.240272    77.059945   244.271106  81.240 us per launch/dispatch
+calib_launch           1000 cpuN             12   30   116.665218   112.062687   160.624488  116.665 us per launch/dispatch
+calib_launch           1000 cpuN             16   30   153.331917   143.556147   366.573033  153.332 us per launch/dispatch
+calib_launch           1000 gpu_kernel        1   30     5.751296     5.406720    14.256128  5.751 us per launch/dispatch
+calib_launch           1000 gpu_e2e           1   30    21.181726    19.612372    34.612221  21.182 us per launch/dispatch
+calib_launch          10000 cpu1              1   30     0.014352     0.011638     0.027627  0.001 us per launch/dispatch
+calib_launch          10000 cpuN              1   30     0.486330     0.425386     0.722874  0.049 us per launch/dispatch
+calib_launch          10000 cpuN              2   30   321.136746   300.411738   422.126097  32.114 us per launch/dispatch
+calib_launch          10000 cpuN              4   30   512.163989   470.069812   822.746072  51.216 us per launch/dispatch
+calib_launch          10000 cpuN              6   30   679.309608   642.616075   939.876387  67.931 us per launch/dispatch
+calib_launch          10000 cpuN              8   30   863.315975   803.512607  1236.636601  86.332 us per launch/dispatch
+calib_launch          10000 cpuN             12   30  1230.537762  1130.580098  1606.468274  123.054 us per launch/dispatch
+calib_launch          10000 cpuN             16   30  1571.578958  1460.973324  1863.410513  157.158 us per launch/dispatch
+calib_launch          10000 gpu_kernel        1   30    61.198751    54.433662    85.051613  6.120 us per launch/dispatch
+calib_launch          10000 gpu_e2e           1   30   225.362830   202.612714   429.571795  22.536 us per launch/dispatch

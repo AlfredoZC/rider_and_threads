@@ -1,0 +1,14 @@
+Backend: GPU CUDA "NVIDIA GeForce RTX 4050 Laptop GPU", cc 8.9, 6140 MiB
+[apsp_floyd] size=25 (10 versiones x 10 repeticiones)
+[apsp_floyd] size=100 (10 versiones x 10 repeticiones)
+[apsp_floyd] size=400 (10 versiones x 10 repeticiones)
+[apsp_floyd] size=1000 (10 versiones x 10 repeticiones)
+[apsp_floyd] size=2000 (10 versiones x 10 repeticiones)
+[apsp_floyd] size=3741 (10 versiones x 10 repeticiones)
+[apsp_dijkstra] size=25 (8 versiones x 10 repeticiones)
+[apsp_dijkstra] size=100 (8 versiones x 10 repeticiones)
+[apsp_dijkstra] size=400 (8 versiones x 10 repeticiones)
+[apsp_dijkstra] size=1000 (8 versiones x 10 repeticiones)
+[apsp_dijkstra] size=2000 (8 versiones x 10 repeticiones)
+[apsp_dijkstra] size=3741 (8 versiones x 10 repeticiones)
+Filas escritas: 1080, con correct=no: 0, corridas con error: 0

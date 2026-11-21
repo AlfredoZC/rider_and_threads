@@ -1,0 +1,12 @@
+inicio 2026-11-20T20:51:44-04:00 load 1.62 1.70 3.22 1/2835 13466
+calib rc=0 217s load 1.75 | Filas escritas: 3300, con correct=no: 0, corridas con error: 0
+candidate_filter rc=0 5s load 1.69 | Filas escritas: 2340, con correct=no: 0, corridas con error: 0
+eta_batch rc=0 11s load 1.59 | Filas escritas: 2340, con correct=no: 0, corridas con error: 0
+best_courier rc=0 2s load 1.54 | Filas escritas: 2340, con correct=no: 0, corridas con error: 0
+delivery_histogram rc=0 3s load 1.54 | Filas escritas: 1800, con correct=no: 0, corridas con error: 0
+orders_in_progress rc=0 8s load 1.54 | Filas escritas: 1500, con correct=no: 0, corridas con error: 0
+delivery_percentiles rc=0 152s load 2.68 | Filas escritas: 1500, con correct=no: 0, corridas con error: 0
+delivery_timeline rc=0 75s load 1.82 | Filas escritas: 1500, con correct=no: 0, corridas con error: 0
+demand_heatmap rc=0 41s load 2.80 | Filas escritas: 5400, con correct=no: 0, corridas con error: 0
+coverage_field rc=0 94s load 4.68 | Filas escritas: 2700, con correct=no: 0, corridas con error: 0
+fin 2026-11-20T21:01:54-04:00

@@ -1,0 +1,35 @@
+WARNING: Device-side CUDA Event completion trace is currently enabled.
+         This may increase runtime overhead and the likelihood of false
+         dependencies across CUDA Streams. If you wish to avoid this, please
+         disable the feature with --cuda-event-trace=false.
+Backend: GPU CUDA "NVIDIA GeForce RTX 4050 Laptop GPU", cc 8.9, 6140 MiB
+application,version,size,rep,ms,correct,threads,seed,h2d_ms,kernel_ms,d2h_ms
+best_courier,gpu_e2e,5000,0,7.395816,yes,1,12345,1.260128,3.164512,0.044320
+Collecting data...
+Generating '/tmp/nsys-report-c800.qdstrm'
+
+[1/1] [0%                          ] best_courier_nsys.nsys-rep
+[1/1] [0%                          ] best_courier_nsys.nsys-rep
+[1/1] [====27%                     ] best_courier_nsys.nsys-rep
+[1/1] [====28%                     ] best_courier_nsys.nsys-rep
+[1/1] [=====29%                    ] best_courier_nsys.nsys-rep
+[1/1] [=====32%                    ] best_courier_nsys.nsys-rep
+[1/1] [======33%                   ] best_courier_nsys.nsys-rep
+[1/1] [======35%                   ] best_courier_nsys.nsys-rep
+[1/1] [=======36%                  ] best_courier_nsys.nsys-rep
+[1/1] [=======37%                  ] best_courier_nsys.nsys-rep
+[1/1] [=======38%                  ] best_courier_nsys.nsys-rep
+[1/1] [=======39%                  ] best_courier_nsys.nsys-rep
+[1/1] [========40%                 ] best_courier_nsys.nsys-rep
+[1/1] [========41%                 ] best_courier_nsys.nsys-rep
+[1/1] [========42%                 ] best_courier_nsys.nsys-rep
+[1/1] [=========44%                ] best_courier_nsys.nsys-rep
+[1/1] [=========45%                ] best_courier_nsys.nsys-rep
+[1/1] [=========46%                ] best_courier_nsys.nsys-rep
+[1/1] [==========48%               ] best_courier_nsys.nsys-rep
+[1/1] [===============67%          ] best_courier_nsys.nsys-rep
+[1/1] [===================80%      ] best_courier_nsys.nsys-rep
+[1/1] [========================100%] best_courier_nsys.nsys-rep
+[1/1] [========================100%] best_courier_nsys.nsys-rep
+Generated:
+	~/ec2inf/perfiles/best_courier_nsys.nsys-rep

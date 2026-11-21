@@ -1,0 +1,14 @@
+Backend: GPU CUDA "NVIDIA GeForce RTX 4050 Laptop GPU", cc 8.9, 6140 MiB
+[best_courier] size=50 (10 versiones x 10 repeticiones)
+[best_courier] size=150 (10 versiones x 10 repeticiones)
+[best_courier] size=500 (10 versiones x 10 repeticiones)
+[best_courier] size=777 (10 versiones x 10 repeticiones)
+[best_courier] size=2000 (10 versiones x 10 repeticiones)
+[best_courier] size=5000 (10 versiones x 10 repeticiones)
+[best_courier_divergent] size=50 (3 versiones x 10 repeticiones)
+[best_courier_divergent] size=150 (3 versiones x 10 repeticiones)
+[best_courier_divergent] size=500 (3 versiones x 10 repeticiones)
+[best_courier_divergent] size=777 (3 versiones x 10 repeticiones)
+[best_courier_divergent] size=2000 (3 versiones x 10 repeticiones)
+[best_courier_divergent] size=5000 (3 versiones x 10 repeticiones)
+Filas escritas: 780, con correct=no: 0, corridas con error: 0

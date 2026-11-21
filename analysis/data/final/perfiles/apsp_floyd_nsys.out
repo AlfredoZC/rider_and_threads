@@ -1,0 +1,30 @@
+WARNING: Device-side CUDA Event completion trace is currently enabled.
+         This may increase runtime overhead and the likelihood of false
+         dependencies across CUDA Streams. If you wish to avoid this, please
+         disable the feature with --cuda-event-trace=false.
+Backend: GPU CUDA "NVIDIA GeForce RTX 4050 Laptop GPU", cc 8.9, 6140 MiB
+application,version,size,rep,ms,correct,threads,seed,h2d_ms,kernel_ms,d2h_ms
+apsp_floyd,gpu_e2e,3741,0,8326.037354,yes,1,12345,119.061249,207.248199,6.988896
+Collecting data...
+Generating '/tmp/nsys-report-becb.qdstrm'
+
+[1/1] [0%                          ] apsp_floyd_nsys.nsys-rep
+[1/1] [0%                          ] apsp_floyd_nsys.nsys-rep
+[1/1] [====28%                     ] apsp_floyd_nsys.nsys-rep
+[1/1] [=====29%                    ] apsp_floyd_nsys.nsys-rep
+[1/1] [=====30%                    ] apsp_floyd_nsys.nsys-rep
+[1/1] [=====31%                    ] apsp_floyd_nsys.nsys-rep
+[1/1] [=====32%                    ] apsp_floyd_nsys.nsys-rep
+[1/1] [======33%                   ] apsp_floyd_nsys.nsys-rep
+[1/1] [======34%                   ] apsp_floyd_nsys.nsys-rep
+[1/1] [======35%                   ] apsp_floyd_nsys.nsys-rep
+[1/1] [=======37%                  ] apsp_floyd_nsys.nsys-rep
+[1/1] [=======38%                  ] apsp_floyd_nsys.nsys-rep
+[1/1] [=======39%                  ] apsp_floyd_nsys.nsys-rep
+[1/1] [========40%                 ] apsp_floyd_nsys.nsys-rep
+[1/1] [==============63%           ] apsp_floyd_nsys.nsys-rep
+[1/1] [===================79%      ] apsp_floyd_nsys.nsys-rep
+[1/1] [========================100%] apsp_floyd_nsys.nsys-rep
+[1/1] [========================100%] apsp_floyd_nsys.nsys-rep
+Generated:
+	~/ec2inf/perfiles/apsp_floyd_nsys.nsys-rep

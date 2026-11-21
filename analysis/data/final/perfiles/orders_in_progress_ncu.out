@@ -1,0 +1,7 @@
+==PROF== Connected to process 20503 (~/intci/build-cuda/delivery_sim)
+Backend: GPU CUDA "NVIDIA GeForce RTX 4050 Laptop GPU", cc 8.9, 6140 MiB
+==PROF== Profiling "scanBlockKoggeStone": 0%....50%....100% - 40 passes
+application,version,size,rep,ms,correct,threads,seed,h2d_ms,kernel_ms,d2h_ms
+orders_in_progress,gpu_e2e,10000000,0,1287.534978,yes,1,12345,4.254528,1253.755615,5.821856
+==PROF== Disconnected from process 20503
+==PROF== Report: ~/ec2inf/perfiles/orders_in_progress_ncu.ncu-rep

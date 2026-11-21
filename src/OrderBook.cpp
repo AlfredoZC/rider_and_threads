@@ -57,7 +57,7 @@ bool OrderBook::admit(Order order) {
         rejected.name = EventName::kOrderRejected;
         rejected.order = order.id;
         rejected.reason = toString(RejectReason::queueFull);
-        log_.write(rejected);
+        order.rejectedMs = log_.write(rejected);
 
         orders_.emplace(order.id, std::move(order));
         ++stats_.rejected;
@@ -88,7 +88,7 @@ bool OrderBook::reject(OrderId id, RejectReason reason) {
     event.name = EventName::kOrderRejected;
     event.order = id;
     event.reason = toString(reason);
-    log_.write(event);
+    it->second.rejectedMs = log_.write(event);
     return true;
 }
 bool OrderBook::unassign(OrderId id, bool countAsReassigned) {
@@ -199,7 +199,7 @@ std::int64_t OrderBook::rejectExpired(std::int64_t acceptTimeoutMs) {
         event.name = EventName::kOrderRejected;
         event.order = o.id;
         event.reason = toString(RejectReason::noCourier);
-        log_.write(event);
+        o.rejectedMs = log_.write(event);
     }
     return rejected;
 }
@@ -288,7 +288,7 @@ OrderBook::AssignResult OrderBook::assignUnlessExpired(OrderId id, CourierId cou
         event.name = EventName::kOrderRejected;
         event.order = o.id;
         event.reason = toString(RejectReason::noCourier);
-        log_.write(event);
+        o.rejectedMs = log_.write(event);
         return AssignResult::expired;
     }
     return assignLocked(id, courier) ? AssignResult::assigned : AssignResult::failed;
@@ -471,4 +471,63 @@ OrderStats OrderBook::stats() const {
     copy.avgUrgentDeliveryMs =
         stats_.urgentDelivered > 0 ? urgentDeliverySumMs_ / stats_.urgentDelivered : 0;
     return copy;
+}
+
+std::vector<std::int64_t> OrderBook::deliveredTimesMs() const {
+    const std::lock_guard<std::mutex> guard(mutex_);
+    std::vector<std::int64_t> times;
+    times.reserve(static_cast<std::size_t>(stats_.delivered));
+    for (const auto& entry : orders_) {
+        if (entry.second.state == OrderState::delivered) {
+            times.push_back(deliveryMs(entry.second));
+        }
+    }
+    return times;
+}
+
+std::vector<OrderSpan> OrderBook::orderSpans() const {
+    const std::lock_guard<std::mutex> guard(mutex_);
+    std::vector<OrderSpan> spans;
+    spans.reserve(orders_.size());
+    for (const auto& entry : orders_) {
+        const Order& order = entry.second;
+        OrderSpan span;
+        span.createdMs = order.createdMs;
+        if (order.state == OrderState::delivered) {
+            span.closedMs = order.deliveredMs;
+        } else if (order.state == OrderState::rejected) {
+            span.closedMs = order.rejectedMs;
+        }
+        spans.push_back(span);
+    }
+    return spans;
+}
+
+std::vector<DeliveryEntry> OrderBook::deliveries() const {
+    const std::lock_guard<std::mutex> guard(mutex_);
+    std::vector<DeliveryEntry> entries;
+    entries.reserve(static_cast<std::size_t>(stats_.delivered));
+    for (const auto& entry : orders_) {
+        const Order& order = entry.second;
+        if (order.state == OrderState::delivered) {
+            entries.push_back({order.assignedCourier, order.deliveredMs, order.id});
+        }
+    }
+    std::sort(entries.begin(), entries.end(), [](const DeliveryEntry& left, const DeliveryEntry& right) {
+        if (left.courier != right.courier) return left.courier < right.courier;
+        if (left.deliveredMs != right.deliveredMs) return left.deliveredMs < right.deliveredMs;
+        return left.orderId < right.orderId;
+    });
+    return entries;
+}
+
+std::vector<std::string> OrderBook::dropoffNodesCreatedSince(std::int64_t sinceMs) const {
+    std::vector<std::string> dropoffNodes;
+    const std::lock_guard<std::mutex> guard(mutex_);
+    for (const auto& entry : orders_) {
+        if (entry.second.createdMs != kNoTime && entry.second.createdMs >= sinceMs) {
+            dropoffNodes.push_back(entry.second.dropoffNode);
+        }
+    }
+    return dropoffNodes;
 }

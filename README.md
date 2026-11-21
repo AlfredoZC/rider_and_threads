@@ -36,7 +36,7 @@ Versiones usadas durante el desarrollo (Ubuntu 24.04.1 LTS sobre WSL2):
 | Dependencia | Versión usada | Mínimo exigido | Uso |
 |-------------|---------------|----------------|-----|
 | g++ | 13.3.0 | 7 | Compilador C++17 |
-| CMake | 3.28.3 | 3.11 | Generación del build |
+| CMake | 3.28.3 | 3.11 (3.18 con `USE_CUDA`) | Generación del build |
 | GNU Make | 4.3 | 4.1 | Build |
 | OpenCV | 4.6.0 | 4.1 | **Solo** la ventana (dibujo e imagen de fondo) |
 | nlohmann/json | 3.11.3 | — | Lectura de la configuración y escritura del log. Incluida en `third_party/` |
@@ -67,6 +67,8 @@ cmake .. && make
 | `<config.json>` (obligatorio) | Ruta al archivo de configuración |
 | `--log <path>` (opcional) | Escribe el log de eventos en `<path>` en vez de `events.log` |
 | `--no-window` (opcional) | Corre la simulación sin abrir la ventana. Ver más abajo |
+| `--headless` (opcional) | Corre sin ventana, sin imagen y sin dibujo; la espera es bloqueante. Ver más abajo |
+| `--backend` (opcional) | `cpu`, `gpu` o `auto` (por defecto) Elige el backend. Ver "Hilo dueño de la GPU" |
 
 Builds instrumentados:
 
@@ -85,6 +87,55 @@ mkdir build-asan && cd build-asan && cmake -DENABLE_ASAN=ON .. && make   # Addre
 > sudo sysctl vm.mmap_rnd_bits=28                                     # o: reduce la aleatorización del sistema
 > ```
 
+### Compilación con CUDA (opcional)
+
+El backend GPU es opcional y viene apagado: `cmake .. && make` compila la versión solo CPU, sin necesitar
+CUDA. Para incluirlo (requiere CMake >= 3.18 y CUDA Toolkit >= 11.8, por sm_89; no se combina con TSan/ASan, que se corren sobre el build CPU):
+
+```bash
+mkdir build-cuda && cd build-cuda
+cmake -DUSE_CUDA=ON -DCMAKE_BUILD_TYPE=Release .. && make
+```
+
+Por defecto se generan las arquitecturas `75;89` (T4 de Colab y RTX 4050); se pueden cambiar con
+`-DCMAKE_CUDA_ARCHITECTURES=...`. Al arrancar, el programa imprime en `stderr` una línea con el backend
+detectado (`Backend: GPU CUDA "..."` o `Backend: CPU (...)`); `stdout` no cambia.
+
+### Hilo dueño de la GPU y `--backend`
+
+Con CUDA activo, **un único hilo es dueño de la GPU** (`src/accel/GpuWorker.{h,cpp}`). Los demás hilos
+le enviarán trabajo con `submit(fn)`, que encola la tarea (cola FIFO con `mutex` +
+`condition_variable`, sin sondeo ni sleeps) y devuelve un `std::future`; así los repartidores seguirán
+andando y la ventana refrescándose mientras corre un kernel. El contexto CUDA se crea en ese
+mismo hilo (`cudaSetDeviceFlags(BlockingSync)`, `cudaSetDevice(0)`, `cudaFree(0)` y una sonda:
+`computeMode` no prohibido y cc >= 7.5).
+
+**Estado actual:** esta entrega es la *infraestructura*: el worker, `--backend`, el puntero
+`SimContext::gpu` y el helper de plazo. Todavía **ningún** hilo de la simulación (dispatcher, fleet)
+envía trabajo: eso lo harán las aplicaciones GPU en las features siguientes.
+
+Plazo: `quoteTimeoutMs` es tiempo **real**. El que llama calcula UNA vez por ronda
+`deadline = accel::deadlineAfterMs(quoteTimeoutMs)` (recortado a [0, 24 h], como el Dispatcher) y espera
+cada future con `accel::waitUntilDeadline(future, deadline)`; así N candidatos comparten el plazo. Si
+vence, usa la CPU y descarta el future. `submit(fn, deadline)` acepta además un plazo por tarea: si al
+sacarla de la cola ya venció, no se ejecuta y su future lanza `GpuTaskExpiredError`. Las tareas deben
+capturar por valor o con `shared_ptr` (siguen vivas tras descartar el future), no esperar futures del
+mismo worker y no llamar a `stop()`.
+
+- `stop()` rechaza envíos nuevos (`GpuUnavailableError`), deja terminar la tarea en curso, resuelve con
+  excepción todas las tareas en cola y une el hilo. Se llama después de los hilos que lo usan.
+- Un error CUDA no recuperable (la tarea lanza `GpuFatalError`) deja el worker "no saludable" para
+  siempre: los `submit` siguientes fallan al instante y se usa el respaldo CPU.
+
+| `--backend` | Efecto |
+|-------------|--------|
+| `auto` (por defecto) | GPU si está disponible y saludable; si no, CPU (la línea de `stderr` dice por qué) |
+| `cpu` | No crea el worker ni toca CUDA, aunque el binario tenga CUDA: sirve para probar el respaldo CPU. En WSL no uses `CUDA_VISIBLE_DEVICES=""` (aborta en libcuda): usa `--backend cpu` |
+| `gpu` | Exige GPU: si no está disponible termina con error (código 1) |
+
+La línea `Backend: ...` de `stderr` indica cuál se usará. Decisiones y alternativas descartadas:
+[`docs/adr/0004-hilo-duenio-gpu.md`](docs/adr/0004-hilo-duenio-gpu.md). Prueba: `bash tests/run.sh gpu_worker`.
+
 La simulación termina al cumplirse `simulation.durationS` segundos simulados, o al recibir `SIGINT` (Ctrl-C)
 o `SIGTERM`. En ambos casos imprime el resumen y sale con código 0.
 
@@ -100,6 +151,317 @@ las librerías con las que OpenCV abre la ventana tienen carreras propias que en
 reporte y que no se pueden suprimir por nombre porque vienen sin símbolos. Sin ventana, lo
 que queda bajo análisis es exactamente la concurrencia de este programa. Por defecto la
 ventana se abre, que es lo que pide el §2 del enunciado.
+
+### La bandera `--headless`
+
+```
+./delivery_sim config/ciudad.json --log events.log --headless
+```
+
+Corre la simulación sin ventana **y sin parte gráfica**: no lee la imagen del mapa (la ruta
+`map.image` del config puede no existir), no arma el mapa de píxeles, no dibuja ningún cuadro y no
+llama a OpenCV highgui. Los hilos, el log, el resumen en `stdout` y la línea `Backend:` en `stderr`
+son los mismos. Sirve para correr y medir en una máquina con GPU que no puede abrir la ventana
+(p. ej. `nsys profile --stats=true -o timeline ./delivery_sim ciudad.json --headless`).
+
+Diferencia con `--no-window`: `--no-window` conserva todo el camino gráfico (carga la imagen, dibuja
+cada cuadro y duerme 33 ms por vuelta) y existe para el análisis con ThreadSanitizer del §12;
+`--headless` quita ese camino por completo. Si se pasan ambos, manda `--headless`.
+
+Cómo espera: el hilo principal queda **bloqueado** en una `condition_variable` (`wait_until` hasta el
+instante real en que el reloj simulado llega a `durationS`), sin sleeps ni sondeo. `SIGINT` y
+`SIGTERM` se bloquean en todos los hilos antes de crear el primero y un hilo dedicado las recibe con
+`sigwait`, que despierta al principal. Después se ejecuta el mismo orden de apagado de siempre.
+Prueba automatizada: `bash tools/check_headless.sh build/delivery_sim`.
+
+### Modo bench (`--bench`, `--bench-once`)
+
+Mide las aplicaciones de la GPU con el protocolo de la sección 2.2 del enunciado y escribe un CSV. No corre
+la simulación ni abre ventana. **Solo mide un build Release** (`-DCMAKE_BUILD_TYPE=Release`, sin TSan/ASan):
+con cualquier otro se niega con código 2 ("Never time a Debug or sanitizer build"), incluido el
+`RelWithDebInfo` que usa `cmake ..` por defecto. Decisiones y alternativas: [`docs/adr/0003-modo-bench.md`](docs/adr/0003-modo-bench.md).
+
+```bash
+mkdir build-rel && cd build-rel && cmake -DCMAKE_BUILD_TYPE=Release .. && make          # CPU
+mkdir build-cuda && cd build-cuda && cmake -DUSE_CUDA=ON -DCMAKE_BUILD_TYPE=Release .. && make   # con GPU
+
+# Todas las aplicaciones y tamaños, 10 repeticiones, barrido de hilos 1,2,4,6,8,12,16 (recortado a los núcleos lógicos)
+./delivery_sim ../config/ciudad.json --headless --bench results.csv
+# Una prueba rápida
+./delivery_sim ../config/ciudad.json --headless --bench r.csv --apps calib_launch --sizes 100,1000 --reps 2 --threads 1,4 --force
+# Una sola corrida, para ncu / compute-sanitizer (sin --version corre cada versión una vez)
+ncu --set full -k regex:calib --launch-count 1 ./delivery_sim ../config/ciudad.json --headless --bench-once --app calib_copy --size 1048576
+compute-sanitizer --tool memcheck ./delivery_sim ../config/ciudad.json --headless --bench-once --app calib_launch --size 100 --version gpu_e2e
+bash ../tools/check_bench.sh ./delivery_sim      # verifica CSV, .env.json, rotación y rechazos (solo Release)
+```
+
+| Argumento | Significado |
+|-----------|-------------|
+| `--bench <results.csv>` | Modo medición; no sobrescribe un CSV existente sin `--force` |
+| `--apps a,b` | Aplicaciones a medir (por defecto todas las registradas: `calib_copy`, `calib_launch`) |
+| `--reps N` | Repeticiones medidas, 1 a 100000 (por defecto 10; el enunciado pide al menos 10 para el informe) |
+| `--threads 1,2,4` | Barrido de `cpuN`; por defecto 1,2,4,6,8,12,16 recortado a `hardware_concurrency` |
+| `--sizes s1,s2` | Reemplaza los tamaños de cada aplicación (para pruebas rápidas) |
+| `--seed S` | Semilla de las entradas, igual para todas las versiones (por defecto 12345) |
+| `--bench-once --app X --size N [--version V] [--threads N]` | Una corrida sin calentamiento ni CSV; imprime las filas en `stdout` |
+
+Protocolo por (aplicación, tamaño): una corrida de calentamiento de cada versión sin registrar y luego las
+repeticiones, con el **orden de versiones rotado** una posición en cada repetición. Cada corrida se compara
+contra `cpu1`; si alguna da `correct=no` (o una corrida no se pudo ejecutar) el programa termina con código 1
+después de escribir el CSV. Sin CUDA, o sin GPU, las versiones `gpu_*` se omiten con un aviso.
+
+Formato del CSV, una línea por corrida (`stdout` imprime además una tabla con mediana, mínimo y máximo):
+
+```
+application,version,size,rep,ms,correct,threads,seed,h2d_ms,kernel_ms,d2h_ms
+calib_copy,cpu1,4096,0,0.000098,yes,1,12345,,,
+calib_copy,gpu_e2e,1048576,0,0.378279,yes,1,12345,0.138880,,0.233280
+```
+
+| Columna | Contenido |
+|---------|-----------|
+| `application`, `version`, `size`, `rep` | Aplicación, versión (`cpu1`, `cpuN`, `gpu_kernel`, `gpu_e2e`), tamaño (cada aplicación define su unidad) y repetición (desde 0) |
+| `ms` | Tiempo de la versión: `steady_clock` en `cpu1`, `cpuN` y `gpu_e2e` (con `cudaDeviceSynchronize` antes de parar); `cudaEvent` en `gpu_kernel` |
+| `correct` | `yes` o `no`: el resultado es igual al de `cpu1` |
+| `threads` | Hilos de la versión (1 para `cpu1` y las GPU) |
+| `seed` | Semilla de la entrada |
+| `h2d_ms`, `kernel_ms`, `d2h_ms` | Tiempos de `cudaEvent` (vacíos si no aplican) |
+
+Junto al CSV queda `<csv>.env.json` con el hardware y el build: modelo de CPU, `hardware_concurrency`, GPU
+(nombre, compute capability, SMs, memoria, relojes, ancho del bus y ancho de banda pico teórico), versiones
+de CUDA runtime y driver, compilador, tipo de build, flags, commit, semilla y barrido de hilos.
+
+Aplicaciones incluidas, de **calibración de overheads** (no son una de las diez aplicaciones del §1 del
+enunciado: dan los techos de copia y de lanzamiento para el análisis y el roofline):
+
+- `calib_copy` (`size` = bytes, de 4 KB a 256 MB): `cpu1` = `memcpy`; `cpuN` = `memcpy` particionado;
+  `gpu_kernel` = copia dispositivo→dispositivo con un kernel (ancho de banda de la VRAM); `gpu_e2e` =
+  ida y vuelta H2D + D2H con memoria paginable, con `h2d_ms` y `d2h_ms`.
+- `calib_launch` (`size` = N lanzamientos): `gpu_kernel` = N lanzamientos de un kernel de un hilo seguidos
+  y una sola espera; `gpu_e2e` = cada lanzamiento seguido de `cudaDeviceSynchronize`; `cpu1` = N llamadas
+  a una función trivial; `cpuN` = N despachos del pool de hilos de `src/accel/ThreadPool.h`.
+
+Para agregar una aplicación: un archivo en `src/bench/` con una clase que herede de `BenchApp` y la línea
+`BENCH_REGISTER_APP("nombre", Clase);`. `src/bench/CitySubgraph.h` ofrece `extractRegion(config, nodo, n)`,
+un subgrafo conexo de la ciudad real con exactamente `n` nodos (BFS determinista desde un nodo de Equipetrol,
+con las calles y sus sentidos) para los tamaños de grafo.
+
+#### Prueba de equivalencia GPU = CPU
+
+`tests/run.sh` corre sin CUDA, así que solo prueba cpu1 == cpuN. La igualdad GPU == CPU (exacta para enteros;
+con la tolerancia documentada de cada aplicación para float) la comprueba `tools/check_gpu_equivalence.sh`:
+corre `--bench-once` en cada aplicación registrada (las 10 y sus variantes; no las `calib_*`) con 3 tamaños
+(1, uno que no es múltiplo del bloque y uno mediano) y exige exit 0, cabecera correcta, filas
+`gpu_kernel`/`gpu_e2e` (salvo `apsp_dijkstra`, solo CPU) y `correct=yes` en todas. Córrela en un build
+`-DUSE_CUDA=ON` con GPU, antes de entregar o de cambiar un kernel o una versión CPU (tarda menos de un minuto);
+se niega (exit 2) si el build no tiene CUDA o no hay GPU usable, sale con 1 si algún caso falla y con 0 si todos dan igual:
+
+```bash
+bash tools/check_gpu_equivalence.sh build/delivery_sim
+```
+
+Las propiedades de la línea de tiempo fusionada (app 11: hora no decreciente, cada pedido una vez, orden por
+courier conservado) las prueba `tests/test_delivery_timeline.cpp` sin CUDA.
+
+#### Aplicación 07: histograma de tiempos de entrega por minuto (`delivery_histogram`)
+
+Cuenta cuántas entregas tardaron cada minuto (barras 0..59 y una barra 60 que junta "60 min o más"; la suma
+de las barras es siempre la cantidad de entregas). En la GPU cada bloque cuenta en su copia del histograma en
+memoria compartida y al final la suma al global (privatización); la CPU de N hilos usa un histograma por trozo
+de `ThreadPool::parallelFor` y una suma final. Dentro del programa: al terminar la simulación, `main` pide el
+histograma de los pedidos entregados al `GpuWorker` (con respaldo en la CPU) e imprime en stderr una línea
+`[estadisticas] histograma de entrega (min): ...` con las barras no vacías; el resumen de stdout no cambia.
+Código: `src/accel/DeliveryHistogram.{h,cpp}`, `src/accel/cuda/DeliveryHistogram.cu`.
+
+```bash
+./delivery_sim ../config/ciudad.json --headless --bench h.csv --apps delivery_histogram,histogram_naive --reps 2
+```
+
+`histogram_naive` mide solo la GPU con un atómico global por entrega, para ver el costo de la contención
+frente a la versión privatizada. Tamaños por defecto: 1e3 a 1e7 tiempos sintéticos (log-normal, mediana 28 min).
+
+#### Aplicación 09: pedidos en curso a lo largo del tiempo y su pico (`orders_in_progress`)
+
+Cada pedido aporta un evento +1 al crearse y un −1 al entregarse o rechazarse; ordenados por tiempo (en un
+empate el +1 va primero, así la cuenta nunca baja de 0), la suma acumulada (scan inclusivo) es la cantidad de
+pedidos abiertos en cada momento y su máximo es el pico. En la GPU: scan jerárquico Kogge–Stone con doble
+buffer (bloques de 512) y reducción `max` con una clave de 64 bits (pico + evento más temprano); la CPU de N
+hilos hace dos pasadas con `ThreadPool::parallelFor`. Dentro del programa: al terminar la simulación, `main`
+arma los eventos con los tiempos de creación y cierre del `OrderBook` (`OrderBook::orderSpans`, que ahora
+guarda también el instante del rechazo en `Order::rejectedMs`), los pide al `GpuWorker` (respaldo CPU) e
+imprime en stderr `[estadisticas] pedidos en curso: pico P en t=..s, abiertos al final A`; stdout no cambia.
+Código: `src/accel/OpenOrders.{h,cpp}`, `src/accel/cuda/OpenOrders.cu`.
+
+```bash
+./delivery_sim ../config/ciudad.json --headless --bench o.csv --apps orders_in_progress --reps 2
+```
+
+#### Aplicación 12: percentiles p50, p90 y p99 del tiempo de entrega con radix sort (`delivery_percentiles`)
+
+Para tener percentiles exactos se ordenan los tiempos de entrega con un radix sort LSD de 1 bit por pasada
+(solo los bits del máximo): cada pasada marca los que tienen el bit en 0, hace un scan exclusivo de las marcas
+(es el scan inclusivo de la aplicación 09, `src/accel/cuda/Scan.cu`, menos la propia marca) y reubica de forma
+estable. El percentil es el de rango más cercano, `(p·N+99)/100 − 1` en enteros. La CPU de N hilos cuenta los
+ceros por franja con `ThreadPool::parallelFor`, hace un scan de las franjas y reubica cada una por su cuenta.
+Dentro del programa: al terminar la simulación, `main` pide los percentiles de los pedidos entregados al
+`GpuWorker` (respaldo CPU) e imprime en stderr `[estadisticas] percentiles de entrega: p50 X min, p90 Y min,
+p99 Z min (backend=...)`; stdout no cambia. Código: `src/accel/DeliveryPercentiles.{h,cpp}`,
+`src/accel/cuda/DeliveryPercentiles.cu`.
+
+```bash
+./delivery_sim ../config/ciudad.json --headless --bench p.csv --apps delivery_percentiles --reps 2
+```
+
+#### Aplicación 11: línea de tiempo global de entregas (`delivery_timeline`)
+
+La lista de entregas de cada courier ya está ordenada por hora, así que en vez de reordenar todo se **fusionan**
+las listas de a pares en un árbol de ⌈log₂ L⌉ rondas. En paralelo se reparte la **salida** de cada ronda:
+cada hilo produce un tramo de posiciones y calcula con co-rank (búsqueda binaria) cuántos elementos salen de cada
+lista; la fusión es estable (en un empate va primero la lista de la izquierda) y la búsqueda del par salta los
+couriers sin entregas. En la GPU una ronda es un lanzamiento para todos los pares (4 salidas por hilo), y las
+entregas por hora salen de dos búsquedas binarias por hora, sin atómicos. Dentro del programa: al terminar la
+simulación, `main` arma una lista por courier con `OrderBook::deliveries()`, pide la fusión al `GpuWorker`
+(respaldo CPU) e imprime en stderr `[estadisticas] entregas por hora simulada: h0 N0, h1 N1, ...`; la suma
+coincide con `delivered` del resumen, que no cambia. Código: `src/accel/DeliveryTimeline.{h,cpp}`,
+`src/accel/cuda/DeliveryTimeline.cu`.
+
+```bash
+./delivery_sim ../config/ciudad.json --headless --bench t.csv --apps delivery_timeline --reps 2
+```
+
+### Aplicación 05: mapa de calor de la demanda (convolución 2D)
+
+Cuenta los pedidos creados en los últimos 10 minutos simulados por celda de una grilla de 128 × 128 sobre
+`map.bounds` (por el nodo del cliente) y los suaviza con un filtro gaussiano 7 × 7 (σ = 1,5 celdas, lo que sale
+de la grilla cuenta 0): `accel::smoothDemand` en `src/accel/DemandHeatmap.{h,cpp}`. Versiones: CPU de 1 hilo, CPU
+con N hilos (franjas de filas con `ThreadPool::parallelFor`) y GPU con un hilo por celda y el filtro en memoria
+constante (`src/accel/cuda/DemandHeatmap.cu`, kernel **principal**); la variante con tile de memoria compartida y
+halo (`DemandKernel::tiledHalo`) es opcional y se mide como `demand_heatmap_tiles`. Tolerancia GPU contra CPU:
+`|d| / (1 + |ref|) <= 1e-5` (la GPU fusiona `a*b+c` en una FMA).
+
+En la simulación, un hilo (`src/DemandHeat.*`) pide el suavizado cada ~2 s reales al `GpuWorker` (plazo real de
+1 s; si falla o vence, CPU); la ventana solo dibuja el último resultado listo y nunca espera. Tecla **H**:
+muestra/oculta la capa (con leyenda). Al terminar imprime en stderr `[estadisticas] zona mas caliente: celda
+(x,y) ~ lat,lon, valor V` (también con `--headless`). `--snapshot <png>` guarda el último cuadro dibujado (con
+`--no-window` o con ventana; no con `--headless`). El resumen oficial y el log no cambian.
+
+```bash
+./delivery_sim ../config/ciudad.json --headless --bench h.csv --apps demand_heatmap,demand_heatmap_tiles --sizes 128,1024 --reps 2 --force
+./delivery_sim ../config/ciudad.json --no-window --snapshot mapa_calor.png
+```
+
+### Aplicación 06: campo de cobertura de la flota (stencil de 5 puntos, Jacobi)
+
+Sobre la grilla de 128 × 128 de `map.bounds`, las celdas con couriers son **fuentes fijas** (se cuentan con margen 1
+para que ninguna caiga en el borde), el contorno vale **0** fijo y cada celda libre pasa a ser el promedio de sus 4
+vecinas del barrido anterior (Jacobi, doble buffer). Todas las versiones hacen la misma cantidad de barridos (200 en
+el programa): `accel::coverageFieldCpu1`, `accel::coverageFieldCpuN` (franjas de filas por barrido; el retorno de
+`parallelFor` es la barrera) y GPU con un hilo por celda y **un lanzamiento por barrido** con dos buffers cuyos
+punteros se intercambian en el host (`src/accel/CoverageField.{h,cpp}`, `src/accel/cuda/CoverageField.cu`).
+Tolerancia contra cpu1: `|d| / (1 + |ref|) <= 1e-5` (en la práctica el resultado es idéntico).
+
+En la simulación, `CoverageFieldService` (`src/CoverageLayer.*`) toma la posición de los couriers cada ~2,5 s reales,
+pide el campo al `GpuWorker` (plazo real de 1 s; si falla o vence, CPU) y la ventana dibuja el último resultado
+listo. Tecla **C** muestra/oculta la capa de cobertura (rojo = poco cubierto) y **H** la de demanda; `--layers
+none|heat|coverage|both` elige las capas iniciales. Al terminar imprime en stderr `[estadisticas] zona menos
+cubierta: celda (x,y) ~ lat,lon, valor V` (zona de 16 × 16 celdas con menor cobertura media; las zonas del contorno
+salen castigadas porque el borde vale 0 por diseño). El resumen oficial y el log no cambian.
+
+```bash
+./delivery_sim ../config/ciudad.json --headless --bench c.csv --apps coverage_field --sizes 128,1024 --reps 2 --force
+./delivery_sim ../config/ciudad.json --no-window --layers coverage --snapshot cobertura.png
+```
+
+### Efecto de la GPU sobre la simulación completa (`sim_metrics.py`, `sim_compare.sh`)
+
+Mide el sistema en marcha (no el kernel aislado): latencia de despacho por pedido (`orderCreated` → primer
+`orderAssigned`, en tiempo simulado: media, p50, p90, p99, máx.), pedidos entregados por hora simulada, rechazos y
+FPS de la ventana. Con ventana o `--no-window` el programa imprime al terminar, en stderr, `[estadisticas] cuadros: N,
+fps medio X, tiempo de dibujo p50 Y ms / p95 Z ms` (el tiempo de dibujo excluye la espera del ritmo de cuadros; en
+`--headless` no hay cuadros y no se imprime). `tools/sim_metrics.py <log> [--stderr <err>] [--format json|csv]`
+calcula las métricas de una corrida (solo biblioteca estándar; sin pedidos no falla). `tools/sim_compare.sh` corre la
+ciudad N veces **alternando `--backend auto` y `--backend cpu`** con duración real fija, valida cada log con
+`validate_log.py` y escribe un CSV (`backend,run,mode,validator_ok,<métricas>`). Prueba: `python3 tests/test_sim_metrics.py`.
+
+```bash
+tools/sim_compare.sh -b build/delivery_sim -n 3 -d 30 -m no-window -o sim_compare.csv   # -m headless | window
+```
+
+### Aplicación 03: tabla de tiempos entre todos los pares (Floyd–Warshall por tiles)
+
+Al arrancar la simulación se calcula una sola vez la tabla `travelTimeMs[desde][hasta]` de las 3.741 intersecciones
+(`src/accel/TravelTimeTable.h`, 56 MB, inmutable, respeta el sentido de las calles). Si hay GPU sana se pide al
+`GpuWorker` (Floyd–Warshall por tiles de 32×32, en `src/accel/cuda/TravelTimeTable.cu`); si no, o si falla, se
+calcula en CPU con Dijkstra desde cada nodo en paralelo. Se publica en `SimContext::travelTimes` y, cuando está
+lista, `estimateDeliveryMsWithTable` (la cotización del dispatcher) lee dos celdas en vez de correr Dijkstra; hasta
+entonces todo sigue como antes. El movimiento de los couriers sigue usando `Router::shortestPath`. Al estar lista
+escribe en stderr `[gpu] tabla de tiempos lista: N nodos, backend X, T ms`. Un valor 0x3f3f3f3f ms (más de 12 días)
+significa "no hay camino" y los tiempos de una calle se saturan a int32.
+
+Bench (`apsp_floyd`: cpu1, cpuN, gpu_kernel, gpu_e2e; `apsp_dijkstra`: la mejor CPU, cpu1 y cpuN; tamaños = subgrafos
+de la ciudad real de 25 a 3.741 nodos):
+
+```bash
+./delivery_sim ../config/ciudad.json --headless --bench r.csv --apps apsp_floyd,apsp_dijkstra --reps 2 --force
+```
+
+### Aplicación 10: filtrar couriers candidatos (filter / compactación)
+
+Antes de cotizar un pedido, el `Dispatcher` filtra la flota con `accel::CandidateFilter` (`src/accel/CandidateFilter.h`):
+un courier es candidato si está disponible (no averiado, no en descanso, con lugar en la bolsa) y la tabla de
+tiempos de la aplicación 03 dice que llega al restaurante en a lo sumo el radio (`--candidate-radius-ms N`, por
+defecto 600000 = 10 min; 0 lo apaga). El predicado es uno solo para CPU y GPU (`src/accel/CandidatePredicate.h`). Con la
+tabla publicada se pide el filtro al `GpuWorker` (tabla residente en el device, lista privada por bloque en memoria
+compartida y un atómico global por bloque; plazo `quoteTimeoutMs` en tiempo real) y, si no hay GPU, falla o vence, se
+filtra en CPU. Se cotiza primero a los cercanos; si nadie queda dentro del radio, o si los cercanos no pueden tomar
+el pedido, se cotiza al resto: el filtro nunca genera un rechazo nuevo, y la decisión final sigue pasando por
+`reserve()`. Al cerrar escribe en stderr `[gpu] filtro de candidatos: X en GPU, Y en CPU`.
+
+Bench (`candidate_filter`: cpu1, cpuN, gpu_kernel, gpu_e2e; `candidate_filter_naive`: lo mismo con un atómico global por
+candidato, para medir la contención; flotas de 100 a 200.000 couriers en nodos reales; `gpu_e2e` incluye copiar la
+tabla de 56 MB):
+
+```bash
+./delivery_sim ../config/ciudad.json --headless --bench r.csv --apps candidate_filter,candidate_filter_naive --reps 2 --force
+```
+
+### Aplicación 04: ETA en lote pedido × courier (coalescing, AoS contra SoA)
+
+Las cotizaciones de una ronda del `Dispatcher` (los couriers que deja el filtro de la aplicación 10) se calculan como UNA
+fila de una matriz de ETA (`accel::EtaBatch`, `src/accel/EtaBatch.h`): `ETA = max(libreDesde + viajeAlRestaurante, pedidoListo)
++ viajeAlCliente`, con los viajes leídos de la tabla de la aplicación 03 (la misma fórmula que `estimateDeliveryMsWithTable`,
+en `src/accel/EtaFormula.h`; un tiempo sin camino se propaga como "inalcanzable"). Se pide al `GpuWorker` (un hilo por par, el
+courier en el eje x, columnas SoA con lecturas coalescidas) con el plazo común de `quoteTimeoutMs` y, si no hay GPU, falla o
+vence, se calcula en CPU con la misma fórmula. Con una cotización propia (`setQuoteFunction`) o sin tabla publicada se cotiza
+courier por courier como antes. La elección del mejor y `reserve()` no cambian. Al cerrar escribe en stderr
+`[gpu] ETA en lote: X en GPU, Y en CPU`.
+
+Bench: `eta_batch_soa` y `eta_batch_aos` (la misma fórmula con los couriers como arreglos o como registros de 32 bytes de los
+que la ETA usa 8). `size` = couriers; los pedidos salen de 50→10, 150→30, 500→100, 2000→300, 5000→600 (otro tamaño: size/8).
+`describe` informa los bytes útiles y movidos (modelo) y los GB/s efectivos:
+
+```bash
+./delivery_sim ../config/ciudad.json --headless --bench r.csv --apps eta_batch_soa,eta_batch_aos --reps 2 --force
+```
+
+### Aplicación 08: elegir el mejor courier (reducción argmin)
+
+La fila de ETA de un pedido (aplicación 04) se reduce a su mínimo con una clave de 64 bits `(ETA << 32) | id del courier`
+(`src/accel/BestCourier.h`): el mínimo de las claves es el de menor ETA y, a igual ETA, el de menor id, el mismo desempate del
+`Dispatcher`. En la GPU es un bloque por pedido: cada hilo recorre su parte de la fila y un árbol CONVERGENTE en memoria
+compartida combina los parciales; hay también una variante DIVERGENTE (empareja vecinos) para medir la diferencia. El
+`Dispatcher` pide la ETA y el argmin al `GpuWorker` en la MISMA tarea (mismo plazo común de `dispatchOne`; respaldo CPU
+idéntico). Como el argmin devuelve solo el mejor y el `Dispatcher` necesita el orden completo para reintentar si `reserve()`
+lo rechaza, el mejor por argmin va primero y el resto se ordena en CPU como antes. Los `CourierId` son de 64 bits (los
+refuerzos llevan el bit 63): la clave usa la posición del courier en el orden de ids reales, que conserva el desempate.
+Al cerrar escribe en stderr `[gpu] mejor courier: X en GPU, Y en CPU`.
+
+Bench: `best_courier` (árbol convergente) y `best_courier_divergent`, sobre matrices de ETA sintéticas con semilla fija (empates
+forzados, inalcanzables), `size` = couriers con los pedidos de la aplicación 04:
+
+```bash
+./delivery_sim ../config/ciudad.json --headless --bench r.csv --apps best_courier,best_courier_divergent --reps 2 --force
+```
 
 ## 3. Entrada y salida
 
@@ -159,10 +521,12 @@ no describen necesariamente la flota activa de `config/equipetrol.json`.
 ```
 CMakeLists.txt            build (target delivery_sim, opciones ENABLE_TSAN / ENABLE_ASAN)
 config/equipetrol.json    configuración oficial
+config/ciudad.json        ciudad grande para medir la GPU (ver docs/ciudad.md)
 config/tests/             escenarios de prueba (válidos e inválidos)
 data/equipetrol.png       imagen de OpenStreetMap usada de fondo
-src/                      código fuente C++17
-tests/                    17 programas de prueba y run.sh, que los compila y ejecuta
+data/ciudad.osm, .png     extracto OSM de la ciudad y su fondo dibujado (licencia en data/NOTICE.md)
+src/                      código fuente C++17 (src/accel: backend CPU/CUDA y pool de hilos; src/bench: modo bench)
+tests/                    programas de prueba y run.sh, que los compila y ejecuta
 docs/                     informe técnico y capturas
 third_party/nlohmann/     librería JSON (un solo header)
 tools/                    scripts de apoyo: validación del log, corrida de escenarios, extracción OSM
@@ -212,6 +576,21 @@ python3 tools/osm_extract.py data/equipetrol.osm config/equipetrol.json --all-st
 | Intersecciones y nodos de forma | 668 | 25 |
 | Segmentos de calle | 1027 (259 de un solo sentido) | 40 |
 | Restaurantes | 6 | 6 |
+
+### Ciudad grande (escala para la GPU)
+
+`config/ciudad.json` es la escala del segundo parcial: 3.741 intersecciones de Santa Cruz de la Sierra
+(una caja de ~4,9 × 5,4 km que contiene Equipetrol), 6.058 calles (2.040 de un solo sentido), 150
+restaurantes reales de OpenStreetMap y 2.000 couriers, con una tasa de pedidos que deja cientos
+pendientes. Tiene el mismo esquema que `config/equipetrol.json`. La consulta, el comando exacto y los
+valores elegidos están en [`docs/ciudad.md`](docs/ciudad.md); la decisión, en
+[`docs/adr/0002-escenario-ciudad.md`](docs/adr/0002-escenario-ciudad.md). Datos © OpenStreetMap
+contributors, ODbL ([`data/NOTICE.md`](data/NOTICE.md)). El código sigue bajo MIT; la MIT no cubre esos
+datos.
+
+```bash
+./build/delivery_sim config/ciudad.json --log ciudad.log
+```
 
 Decisiones del modelado:
 

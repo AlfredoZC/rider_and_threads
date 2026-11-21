@@ -1,0 +1,4 @@
+OK    tsan/ciudad: exit 0, cierre en 1253 ms (limite 10000 ms)
+OK    tsan/ciudad: validate_log OK (TODO CORRECTO: el log es valido y el resumen coincide con el)
+OK    tsan/ciudad: 0 reportes de sanitizers
+      3673 lineas de log

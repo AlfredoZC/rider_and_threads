@@ -1,0 +1,31 @@
+WARNING: Device-side CUDA Event completion trace is currently enabled.
+         This may increase runtime overhead and the likelihood of false
+         dependencies across CUDA Streams. If you wish to avoid this, please
+         disable the feature with --cuda-event-trace=false.
+Backend: GPU CUDA "NVIDIA GeForce RTX 4050 Laptop GPU", cc 8.9, 6140 MiB
+application,version,size,rep,ms,correct,threads,seed,h2d_ms,kernel_ms,d2h_ms
+delivery_histogram,gpu_e2e,10000000,0,16.937537,yes,1,12345,3.738144,5.094048,0.111872
+Collecting data...
+Generating '/tmp/nsys-report-c996.qdstrm'
+
+[1/1] [0%                          ] delivery_histogram_nsys.nsys-rep
+[1/1] [0%                          ] delivery_histogram_nsys.nsys-rep
+[1/1] [5%                          ] delivery_histogram_nsys.nsys-rep
+[1/1] [7%                          ] delivery_histogram_nsys.nsys-rep
+[1/1] [======35%                   ] delivery_histogram_nsys.nsys-rep
+[1/1] [=======36%                  ] delivery_histogram_nsys.nsys-rep
+[1/1] [=======37%                  ] delivery_histogram_nsys.nsys-rep
+[1/1] [=======38%                  ] delivery_histogram_nsys.nsys-rep
+[1/1] [=======39%                  ] delivery_histogram_nsys.nsys-rep
+[1/1] [========40%                 ] delivery_histogram_nsys.nsys-rep
+[1/1] [========41%                 ] delivery_histogram_nsys.nsys-rep
+[1/1] [=========43%                ] delivery_histogram_nsys.nsys-rep
+[1/1] [=========44%                ] delivery_histogram_nsys.nsys-rep
+[1/1] [=========45%                ] delivery_histogram_nsys.nsys-rep
+[1/1] [==========47%               ] delivery_histogram_nsys.nsys-rep
+[1/1] [===============67%          ] delivery_histogram_nsys.nsys-rep
+[1/1] [===================80%      ] delivery_histogram_nsys.nsys-rep
+[1/1] [========================100%] delivery_histogram_nsys.nsys-rep
+[1/1] [========================100%] delivery_histogram_nsys.nsys-rep
+Generated:
+	~/ec2inf/perfiles/delivery_histogram_nsys.nsys-rep

@@ -1,0 +1,7 @@
+==PROF== Connected to process 18984 (~/intci/build-cuda/delivery_sim)
+Backend: GPU CUDA "NVIDIA GeForce RTX 4050 Laptop GPU", cc 8.9, 6140 MiB
+==PROF== Profiling "computeEtaAoS": 0%....50%....100% - 40 passes
+application,version,size,rep,ms,correct,threads,seed,h2d_ms,kernel_ms,d2h_ms
+eta_batch_aos,gpu_e2e,5000,0,1108.411983,yes,1,12345,7.545312,1091.654175,1.305568
+==PROF== Disconnected from process 18984
+==PROF== Report: ~/ec2inf/perfiles/eta_batch_aos_ncu.ncu-rep

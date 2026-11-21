@@ -1,0 +1,32 @@
+WARNING: Device-side CUDA Event completion trace is currently enabled.
+         This may increase runtime overhead and the likelihood of false
+         dependencies across CUDA Streams. If you wish to avoid this, please
+         disable the feature with --cuda-event-trace=false.
+Backend: GPU CUDA "NVIDIA GeForce RTX 4050 Laptop GPU", cc 8.9, 6140 MiB
+application,version,size,rep,ms,correct,threads,seed,h2d_ms,kernel_ms,d2h_ms
+delivery_timeline,gpu_e2e,10000000,0,42.737376,yes,1,12345,7.780608,22.097120,7.358720
+Collecting data...
+Generating '/tmp/nsys-report-edc0.qdstrm'
+
+[1/1] [0%                          ] delivery_timeline_nsys.nsys-rep
+[1/1] [0%                          ] delivery_timeline_nsys.nsys-rep
+[1/1] [=====31%                    ] delivery_timeline_nsys.nsys-rep
+[1/1] [=====32%                    ] delivery_timeline_nsys.nsys-rep
+[1/1] [======33%                   ] delivery_timeline_nsys.nsys-rep
+[1/1] [======34%                   ] delivery_timeline_nsys.nsys-rep
+[1/1] [======35%                   ] delivery_timeline_nsys.nsys-rep
+[1/1] [=======36%                  ] delivery_timeline_nsys.nsys-rep
+[1/1] [=======37%                  ] delivery_timeline_nsys.nsys-rep
+[1/1] [=======38%                  ] delivery_timeline_nsys.nsys-rep
+[1/1] [=======39%                  ] delivery_timeline_nsys.nsys-rep
+[1/1] [========40%                 ] delivery_timeline_nsys.nsys-rep
+[1/1] [========41%                 ] delivery_timeline_nsys.nsys-rep
+[1/1] [========42%                 ] delivery_timeline_nsys.nsys-rep
+[1/1] [=========43%                ] delivery_timeline_nsys.nsys-rep
+[1/1] [=========44%                ] delivery_timeline_nsys.nsys-rep
+[1/1] [===============67%          ] delivery_timeline_nsys.nsys-rep
+[1/1] [===================81%      ] delivery_timeline_nsys.nsys-rep
+[1/1] [========================100%] delivery_timeline_nsys.nsys-rep
+[1/1] [========================100%] delivery_timeline_nsys.nsys-rep
+Generated:
+	~/ec2inf/perfiles/delivery_timeline_nsys.nsys-rep

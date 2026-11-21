@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <vector>
 #include <chrono>
@@ -26,6 +27,19 @@ struct OrderStats {
     std::int64_t urgentCreated = 0;
     std::int64_t urgentDelivered = 0;
     std::int64_t avgUrgentDeliveryMs = 0;
+};
+
+// Creacion y cierre (entrega o rechazo) de un pedido; closedMs = kNoTime si sigue abierto.
+struct OrderSpan {
+    std::int64_t createdMs = kNoTime;
+    std::int64_t closedMs = kNoTime;
+};
+
+// Una entrega: quien la hizo, cuando (ms de simulacion) y que pedido.
+struct DeliveryEntry {
+    CourierId courier = kNoCourier;
+    std::int64_t deliveredMs = kNoTime;
+    OrderId orderId = kNoOrder;
 };
 
 class OrderBook {
@@ -76,6 +90,20 @@ public:
     std::vector<OrderId> unassignedIds() const;
 
     OrderStats stats() const;
+
+    // Tiempo total (ms) de cada pedido entregado, en cualquier orden.
+    std::vector<std::int64_t> deliveredTimesMs() const;
+
+    // Creacion y cierre de cada pedido (en cualquier orden).
+    std::vector<OrderSpan> orderSpans() const;
+
+    // Las entregas hechas, ordenadas por courier, hora de entrega y pedido (la lista de cada courier sale
+    // ya ordenada por hora).
+    std::vector<DeliveryEntry> deliveries() const;
+
+    // Nodos de entrega (cliente) de los pedidos creados en o despues de sinceMs (tiempo simulado), incluidos
+    // los rechazados: es demanda igual. Para el mapa de calor de la demanda.
+    std::vector<std::string> dropoffNodesCreatedSince(std::int64_t sinceMs) const;
 
 private:
     bool setState(Order& order, OrderState to);

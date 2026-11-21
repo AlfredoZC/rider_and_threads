@@ -1,0 +1,16 @@
+OK    imagen inexistente se rechaza sin --headless (ventana) (exit 1)
+OK    imagen inexistente se rechaza sin --headless (--no-window) (exit 1)
+OK    duracion: exit 0 (2202 ms)
+OK    duracion: log y resumen validos
+OK    duracion: sin reportes de sanitizers
+OK    SIGINT headless_long: exit 0 en 107 ms
+OK    SIGINT headless_long: log y resumen validos
+OK    SIGINT headless_long: sin reportes de sanitizers
+OK    SIGTERM headless_long: exit 0 en 213 ms
+OK    SIGTERM headless_long: log y resumen validos
+OK    SIGTERM headless_long: sin reportes de sanitizers
+OK    SIGINT headless_huge: exit 0 en 107 ms
+OK    SIGINT headless_huge: log y resumen validos
+OK    SIGINT headless_huge: sin reportes de sanitizers
+----
+--headless OK.

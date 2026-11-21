@@ -1,0 +1,7 @@
+==PROF== Connected to process 20315 (~/intci/build-cuda/delivery_sim)
+Backend: GPU CUDA "NVIDIA GeForce RTX 4050 Laptop GPU", cc 8.9, 6140 MiB
+==PROF== Profiling "bestCourierDivergent": 0%....50%....100% - 40 passes
+application,version,size,rep,ms,correct,threads,seed,h2d_ms,kernel_ms,d2h_ms
+best_courier_divergent,gpu_e2e,5000,0,890.125778,yes,1,12345,1.306560,888.286865,0.086944
+==PROF== Disconnected from process 20315
+==PROF== Report: ~/ec2inf/perfiles/best_courier_divergent_ncu.ncu-rep

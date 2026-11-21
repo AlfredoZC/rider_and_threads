@@ -41,6 +41,7 @@ struct Order {
     std::int64_t assignedMs = kNoTime;
     std::int64_t pickedUpMs = kNoTime;
     std::int64_t deliveredMs = kNoTime;
+    std::int64_t rejectedMs = kNoTime;
 };
 
 inline const char* toString(OrderState s) {
