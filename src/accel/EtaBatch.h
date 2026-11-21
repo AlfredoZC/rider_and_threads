@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "accel/BestCourier.h"
 #include "accel/EtaFormula.h"
 #include "accel/GpuWorker.h"
 #include "accel/ThreadPool.h"
@@ -76,6 +77,8 @@ public:
     // Un hilo por par (pedido, courier), el courier en el eje x. aos = lee los registros de 32 bytes.
     std::string runEta(bool aos, double* elapsedMs);
     std::string download(std::vector<std::int32_t>& eta, double* elapsedMs);
+    // Puntero a la matriz de ETA en el device (valido hasta la proxima runEta que la agrande): lo usa el argmin.
+    const void* etaPointer() const { return etaPointer_; }
     void release();
 
 private:
@@ -100,6 +103,12 @@ private:
     void* stopEvent_ = nullptr;
 };
 
+// La fila de ETA de un pedido y el mejor courier de esa fila (aplicacion 08), con kNoBestCourier si no hay ninguno.
+struct EtaWithBest {
+    std::vector<std::int32_t> eta;
+    std::int32_t bestCourierId = kNoBestCourier;
+};
+
 // Servicio del Dispatcher: calcula la matriz de ETA en la GPU (GpuWorker, tabla residente en el device) con un
 // plazo en tiempo REAL y, si no hay GPU, falla o vence, en CPU con la misma formula. Lo llama un solo hilo.
 class EtaBatch {
@@ -112,15 +121,26 @@ public:
     std::vector<std::int32_t> compute(const std::shared_ptr<const TravelTimeTable>& table, CourierColumns couriers,
                                       OrderColumns orders, std::int64_t timeoutMs);
 
+    // Igual que compute() para UN pedido, y ademas el argmin de la fila (id real del courier, menor id en empate):
+    // en la GPU va en la MISMA tarea que la ETA; el respaldo CPU es identico. courierIds[c] es el id de la columna c.
+    EtaWithBest computeWithBest(const std::shared_ptr<const TravelTimeTable>& table, CourierColumns couriers,
+                                OrderColumns orders, std::vector<std::int32_t> courierIds, std::int64_t timeoutMs);
+
     std::size_t gpuBatches() const { return gpuBatches_; }
+    std::size_t gpuBests() const { return gpuBests_; }
+    std::size_t cpuBests() const { return cpuBests_; }
     std::size_t cpuBatches() const { return cpuBatches_; }
 
 private:
+    EtaWithBest run(const std::shared_ptr<const TravelTimeTable>& table, CourierColumns couriers, OrderColumns orders,
+                    const std::vector<std::int32_t>* courierIds, std::int64_t timeoutMs);
     struct DeviceState;
     GpuWorker* gpu_;
     std::shared_ptr<DeviceState> device_;
     std::size_t gpuBatches_ = 0;
     std::size_t cpuBatches_ = 0;
+    std::size_t gpuBests_ = 0;
+    std::size_t cpuBests_ = 0;
 };
 
 }  // namespace accel

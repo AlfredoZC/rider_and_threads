@@ -427,6 +427,25 @@ que la ETA usa 8). `size` = couriers; los pedidos salen de 50→10, 150→30, 50
 ./delivery_sim ../config/ciudad.json --headless --bench r.csv --apps eta_batch_soa,eta_batch_aos --reps 2 --force
 ```
 
+### Aplicación 08: elegir el mejor courier (reducción argmin)
+
+La fila de ETA de un pedido (aplicación 04) se reduce a su mínimo con una clave de 64 bits `(ETA << 32) | id del courier`
+(`src/accel/BestCourier.h`): el mínimo de las claves es el de menor ETA y, a igual ETA, el de menor id, el mismo desempate del
+`Dispatcher`. En la GPU es un bloque por pedido: cada hilo recorre su parte de la fila y un árbol CONVERGENTE en memoria
+compartida combina los parciales; hay también una variante DIVERGENTE (empareja vecinos) para medir la diferencia. El
+`Dispatcher` pide la ETA y el argmin al `GpuWorker` en la MISMA tarea (mismo plazo común de `dispatchOne`; respaldo CPU
+idéntico). Como el argmin devuelve solo el mejor y el `Dispatcher` necesita el orden completo para reintentar si `reserve()`
+lo rechaza, el mejor por argmin va primero y el resto se ordena en CPU como antes. Los `CourierId` son de 64 bits (los
+refuerzos llevan el bit 63): la clave usa la posición del courier en el orden de ids reales, que conserva el desempate.
+Al cerrar escribe en stderr `[gpu] mejor courier: X en GPU, Y en CPU`.
+
+Bench: `best_courier` (árbol convergente) y `best_courier_divergent`, sobre matrices de ETA sintéticas con semilla fija (empates
+forzados, inalcanzables), `size` = couriers con los pedidos de la aplicación 04:
+
+```bash
+./delivery_sim ../config/ciudad.json --headless --bench r.csv --apps best_courier,best_courier_divergent --reps 2 --force
+```
+
 ## 3. Entrada y salida
 
 - **Entrada:** archivo JSON con el formato de la sección 5 del enunciado (`map`, `nodes`, `streets`,

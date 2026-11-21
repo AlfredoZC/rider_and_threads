@@ -69,7 +69,7 @@ private:
                              std::chrono::steady_clock::time_point deadline);
     bool batchQuotes(const Order& order, const std::vector<FleetMember>& members,
                      std::chrono::steady_clock::time_point deadline,
-                     std::vector<std::pair<std::int64_t, CourierActor*>>& ranked);
+                     std::vector<std::pair<std::int64_t, CourierActor*>>& ranked, CourierActor*& bestActor);
     void splitByRadius(const Order& order, const std::vector<FleetMember>& available,
                        std::vector<FleetMember>& nearby, std::vector<FleetMember>& others,
                        std::chrono::steady_clock::time_point deadline);

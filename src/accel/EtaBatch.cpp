@@ -93,6 +93,7 @@ std::vector<std::int32_t> computeEtaMultiThread(const CourierColumns& couriers, 
 // Estado de la GPU del servicio: lo toca SOLO el hilo del GpuWorker (dentro de las tareas).
 struct EtaBatch::DeviceState {
     EtaDevice device;
+    BestCourierDevice bestDevice;  // el argmin corre en la misma tarea, sobre la matriz que ya esta en el device
     std::shared_ptr<const TravelTimeTable> uploadedTable;
 };
 
@@ -102,19 +103,35 @@ EtaBatch::~EtaBatch() = default;
 
 std::vector<std::int32_t> EtaBatch::compute(const std::shared_ptr<const TravelTimeTable>& table,
                                             CourierColumns couriers, OrderColumns orders, std::int64_t timeoutMs) {
+    return run(table, std::move(couriers), std::move(orders), nullptr, timeoutMs).eta;
+}
+
+EtaWithBest EtaBatch::computeWithBest(const std::shared_ptr<const TravelTimeTable>& table, CourierColumns couriers,
+                                      OrderColumns orders, std::vector<std::int32_t> courierIds,
+                                      std::int64_t timeoutMs) {
+    if (courierIds.size() != couriers.size() || orders.size() != 1) {
+        throw std::invalid_argument("computeWithBest: un pedido y un id por courier");
+    }
+    return run(table, std::move(couriers), std::move(orders), &courierIds, timeoutMs);
+}
+
+EtaWithBest EtaBatch::run(const std::shared_ptr<const TravelTimeTable>& table, CourierColumns couriers,
+                          OrderColumns orders, const std::vector<std::int32_t>* courierIds, std::int64_t timeoutMs) {
     validateEtaInput(couriers, orders, *table);
     // Todo lo que usa la tarea se captura por valor / shared_ptr: puede vivir mas que esta llamada.
     const auto courierColumns = std::make_shared<const CourierColumns>(std::move(couriers));
     const auto orderColumns = std::make_shared<const OrderColumns>(std::move(orders));
+    const auto ids = courierIds != nullptr ? std::make_shared<const std::vector<std::int32_t>>(*courierIds) : nullptr;
     if (gpu_ != nullptr && gpu_->healthy() && courierColumns->size() > 0 && orderColumns->size() > 0) {
         try {
             const auto deadline = deadlineAfterMs(timeoutMs);
             const std::shared_ptr<DeviceState> device = device_;
             const std::shared_ptr<const TravelTimeTable> tableCopy = table;
-            std::future<std::vector<std::int32_t>> future = gpu_->submit(
-                [device, tableCopy, courierColumns, orderColumns] {
+            std::future<EtaWithBest> future = gpu_->submit(
+                [device, tableCopy, courierColumns, orderColumns, ids] {
                     std::string errorMessage;
                     if (device->uploadedTable != tableCopy) {
+                        device->uploadedTable = nullptr;  // si la subida falla no queda un puntero viejo
                         errorMessage = device->device.uploadTable(tableCopy->cells().data(), tableCopy->nodeCount(),
                                                                   nullptr);
                         if (errorMessage.empty()) device->uploadedTable = tableCopy;
@@ -122,19 +139,31 @@ std::vector<std::int32_t> EtaBatch::compute(const std::shared_ptr<const TravelTi
                     if (errorMessage.empty()) errorMessage = device->device.uploadCouriersSoA(*courierColumns, nullptr);
                     if (errorMessage.empty()) errorMessage = device->device.uploadOrders(*orderColumns, nullptr);
                     if (errorMessage.empty()) errorMessage = device->device.runEta(false, nullptr);
-                    std::vector<std::int32_t> eta;
-                    if (errorMessage.empty()) errorMessage = device->device.download(eta, nullptr);
+                    EtaWithBest output;
+                    if (errorMessage.empty()) errorMessage = device->device.download(output.eta, nullptr);
+                    if (errorMessage.empty() && ids != nullptr) {
+                        // Aplicacion 08: el argmin de la fila, en la misma tarea y sobre la matriz ya residente.
+                        errorMessage = device->bestDevice.uploadCourierIds(ids->data(), ids->size(), nullptr);
+                        if (errorMessage.empty()) {
+                            errorMessage = device->bestDevice.run(device->device.etaPointer(), orderColumns->size(),
+                                                                  courierColumns->size(), false, nullptr);
+                        }
+                        std::vector<unsigned long long> keys;
+                        if (errorMessage.empty()) errorMessage = device->bestDevice.download(keys, nullptr);
+                        if (errorMessage.empty() && !keys.empty()) output.bestCourierId = decodeBestKey(keys[0]).courierId;
+                    }
                     if (!errorMessage.empty()) {
                         throwIfGpuError("ETA en lote");  // pegajoso -> GpuFatalError
                         throw std::runtime_error(errorMessage);
                     }
-                    return eta;
+                    return output;
                 },
                 deadline);
             if (waitUntilDeadline(future, deadline)) {
-                std::vector<std::int32_t> eta = future.get();
+                EtaWithBest output = future.get();
                 ++gpuBatches_;
-                return eta;
+                if (ids != nullptr) ++gpuBests_;
+                return output;
             }
             // Vencio: el future se descarta (la tarea sigue con sus copias) y se usa la CPU.
         } catch (const std::exception&) {
@@ -142,7 +171,13 @@ std::vector<std::int32_t> EtaBatch::compute(const std::shared_ptr<const TravelTi
         }
     }
     ++cpuBatches_;
-    return computeEtaSingleThread(*courierColumns, *orderColumns, *table);
+    EtaWithBest output;
+    output.eta = computeEtaSingleThread(*courierColumns, *orderColumns, *table);
+    if (ids != nullptr) {
+        ++cpuBests_;
+        output.bestCourierId = bestCourierSingleThread(output.eta, *ids, orderColumns->size()).front().courierId;
+    }
+    return output;
 }
 
 }  // namespace accel

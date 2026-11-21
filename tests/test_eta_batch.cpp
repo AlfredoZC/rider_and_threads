@@ -214,6 +214,51 @@ void testServiceFallsBackToCpu() {
     CHECK(withWorker.compute(table, columns, exampleOrders(), 2000) == expected);
 }
 
+
+// Aplicacion 08 dentro del servicio: la fila de ETA y el mejor courier juntos (empate: menor id, no posicion).
+void testComputeWithBest() {
+    const auto table = exampleTable();
+    const CourierColumns columns = accel::gatherColumns(exampleFleet(), {1, 3, 4, 7});
+    OrderColumns orderA;  // pedido A del material: ETA 9 9 11 9 -> empate triple entre los ids 1, 3 y 7
+    orderA.restaurantNode = {2};
+    orderA.customerNode = {0};
+    orderA.readyAtMs = {6};
+    OrderColumns orderB;  // pedido B: ETA 6 6 9 5 -> gana el id 7
+    orderB.restaurantNode = {2};
+    orderB.customerNode = {3};
+    orderB.readyAtMs = {2};
+    accel::GpuWorker worker([] {});
+    for (accel::GpuWorker* gpu : {static_cast<accel::GpuWorker*>(nullptr), &worker}) {
+        accel::EtaBatch service(gpu);
+        const accel::EtaWithBest a = service.computeWithBest(table, columns, orderA, {1, 3, 4, 7}, 2000);
+        CHECK(a.eta == (Matrix{9, 9, 11, 9}) && a.bestCourierId == 1);
+        // Los ids no estan en el orden de las columnas: gana el menor id real (la posicion 3), no la primera columna.
+        const accel::EtaWithBest shuffled = service.computeWithBest(table, columns, orderA, {7, 4, 3, 1}, 2000);
+        CHECK(shuffled.bestCourierId == 1);
+        const accel::EtaWithBest b = service.computeWithBest(table, columns, orderB, {1, 3, 4, 7}, 2000);
+        CHECK(b.eta == (Matrix{6, 6, 9, 5}) && b.bestCourierId == 7);
+        CHECK(service.gpuBests() + service.cpuBests() == 3);
+    }
+    // Todos inalcanzables: no hay mejor. Y la validacion de tamanos.
+    std::vector<std::int32_t> cells = accel::buildInitialCells(2, {});
+    const auto islands = std::make_shared<const TravelTimeTable>(2, cells);
+    CourierColumns apart;
+    apart.node = {0};
+    apart.freeAtMs = {0};
+    OrderColumns far;
+    far.restaurantNode = {1};
+    far.customerNode = {1};
+    far.readyAtMs = {0};
+    accel::EtaBatch service(nullptr);
+    CHECK(service.computeWithBest(islands, apart, far, {5}, 100).bestCourierId == accel::kNoBestCourier);
+    bool threw = false;
+    try {
+        (void)service.computeWithBest(islands, apart, far, {5, 6}, 100);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    CHECK(threw);
+}
 }  // namespace
 
 int main() {
@@ -221,6 +266,7 @@ int main() {
     testUnreachableAndEdges();
     testRandomBatches();
     testServiceFallsBackToCpu();
+    testComputeWithBest();
     std::cout << "TODO OK\n";
     return 0;
 }

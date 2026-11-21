@@ -742,6 +742,8 @@ int main(int argc, char** argv) {
               << dispatcher.candidateFilter().cpuFilters() << " en CPU" << std::endl;
     std::cerr << "[gpu] ETA en lote: " << dispatcher.etaBatch().gpuBatches() << " en GPU, "
               << dispatcher.etaBatch().cpuBatches() << " en CPU" << std::endl;
+    std::cerr << "[gpu] mejor courier: " << dispatcher.etaBatch().gpuBests() << " en GPU, "
+              << dispatcher.etaBatch().cpuBests() << " en CPU" << std::endl;
 
     for (auto& entry : restaurants) {
         entry.second->stop();

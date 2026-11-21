@@ -254,7 +254,8 @@ Dispatcher::DispatchResult Dispatcher::quoteRound(const Order& order, const std:
     // Aplicacion 04: con la cotizacion por defecto y la tabla publicada, las cotizaciones de la ronda son UNA
     // fila de ETA calculada en lote (GPU con respaldo CPU) en vez de una cotizacion por courier. Respeta el
     // mismo plazo comun de dispatchOne. Con una cotizacion propia (setQuoteFunction) o sin tabla, como siempre.
-    if (batchQuotes(order, members, deadline, ranked)) {
+    CourierActor* gpuBest = nullptr;  // el mejor segun el argmin de la ETA en lote (GPU o su respaldo CPU)
+    if (batchQuotes(order, members, deadline, ranked, gpuBest)) {
         const std::lock_guard<std::mutex> guard(mutex_);
         requested_ += static_cast<std::int64_t>(members.size());
     } else {
@@ -301,6 +302,17 @@ Dispatcher::DispatchResult Dispatcher::quoteRound(const Order& order, const std:
                   return x.second->id() < y.second->id();
               });
 
+    // Aplicacion 08: el mejor courier lo eligio el argmin de la fila de ETA (en la GPU, dentro de la misma tarea que
+    // la ETA, o su respaldo CPU) y va PRIMERO. Si reserve() lo rechaza, el Dispatcher necesita los demas en orden
+    // para reintentar: ese resto se ordena aqui en CPU como siempre (el argmin devuelve solo el minimo).
+    if (gpuBest != nullptr) {
+        const auto best = std::find_if(ranked.begin(), ranked.end(),
+                                       [gpuBest](const auto& entry) { return entry.second == gpuBest; });
+        if (best != ranked.end()) {
+            std::rotate(ranked.begin(), best, best + 1);
+        }
+    }
+
     // Si un courier rechaza la reserva (por ejemplo, justo empezo a descansar), se prueba
     // con el siguiente mejor.
     for (const auto& entry : ranked) {
@@ -334,7 +346,7 @@ Dispatcher::DispatchResult Dispatcher::quoteRound(const Order& order, const std:
 // preparacion fuera de rango) y quien llama cotiza courier por courier como siempre.
 bool Dispatcher::batchQuotes(const Order& order, const std::vector<FleetMember>& members,
                              std::chrono::steady_clock::time_point deadline,
-                             std::vector<std::pair<std::int64_t, CourierActor*>>& ranked) {
+                             std::vector<std::pair<std::int64_t, CourierActor*>>& ranked, CourierActor*& bestActor) {
     constexpr std::int64_t kMaxBatchPrepMs = 100'000'000;  // ~27 h: la ETA en 32 bits no se satura
     const std::shared_ptr<const accel::TravelTimeTable> table =
         ctx_.travelTimes != nullptr ? ctx_.travelTimes->get() : nullptr;
@@ -362,12 +374,29 @@ bool Dispatcher::batchQuotes(const Order& order, const std::vector<FleetMember>&
     if (actors.empty()) {
         return true;
     }
-    std::vector<std::int32_t> eta;
+    // Los CourierId son de 64 bits (los refuerzos llevan el bit 63) y la clave del argmin lleva 32: cada courier
+    // usa su POSICION en el orden de ids reales (0, 1, 2...), que conserva el desempate "menor id gana".
+    std::vector<std::size_t> byId(actors.size());
+    for (std::size_t column = 0; column < byId.size(); ++column) byId[column] = column;
+    std::sort(byId.begin(), byId.end(),
+              [&actors](std::size_t left, std::size_t right) { return actors[left]->id() < actors[right]->id(); });
+    std::vector<std::int32_t> rankOfColumn(actors.size());
+    std::vector<CourierActor*> actorOfRank(actors.size());
+    for (std::size_t rank = 0; rank < byId.size(); ++rank) {
+        rankOfColumn[byId[rank]] = static_cast<std::int32_t>(rank);
+        actorOfRank[rank] = actors[byId[rank]];
+    }
+    accel::EtaWithBest result;
     try {
-        eta = etaBatch_.compute(table, std::move(couriers), std::move(orders), remainingMs(deadline));
+        result = etaBatch_.computeWithBest(table, std::move(couriers), std::move(orders), rankOfColumn,
+                                           remainingMs(deadline));
     } catch (const std::exception&) {
         return false;  // la ETA en lote es una optimizacion: ante un fallo se cotiza courier por courier
     }
+    const std::vector<std::int32_t>& eta = result.eta;
+    bestActor = result.bestCourierId >= 0 && static_cast<std::size_t>(result.bestCourierId) < actorOfRank.size()
+                    ? actorOfRank[static_cast<std::size_t>(result.bestCourierId)]
+                    : nullptr;
     for (std::size_t column = 0; column < actors.size(); ++column) {
         if (eta[column] < accel::kUnreachableMs) {
             ranked.emplace_back(eta[column], actors[column]);
