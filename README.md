@@ -246,6 +246,23 @@ Para agregar una aplicación: un archivo en `src/bench/` con una clase que hered
 un subgrafo conexo de la ciudad real con exactamente `n` nodos (BFS determinista desde un nodo de Equipetrol,
 con las calles y sus sentidos) para los tamaños de grafo.
 
+#### Prueba de equivalencia GPU = CPU
+
+`tests/run.sh` corre sin CUDA, así que solo prueba cpu1 == cpuN. La igualdad GPU == CPU (exacta para enteros;
+con la tolerancia documentada de cada aplicación para float) la comprueba `tools/check_gpu_equivalence.sh`:
+corre `--bench-once` en cada aplicación registrada (las 10 y sus variantes; no las `calib_*`) con 3 tamaños
+(1, uno que no es múltiplo del bloque y uno mediano) y exige exit 0, cabecera correcta, filas
+`gpu_kernel`/`gpu_e2e` (salvo `apsp_dijkstra`, solo CPU) y `correct=yes` en todas. Córrela en un build
+`-DUSE_CUDA=ON` con GPU, antes de entregar o de cambiar un kernel o una versión CPU (tarda menos de un minuto);
+se niega (exit 2) si el build no tiene CUDA o no hay GPU usable, sale con 1 si algún caso falla y con 0 si todos dan igual:
+
+```bash
+bash tools/check_gpu_equivalence.sh build/delivery_sim
+```
+
+Las propiedades de la línea de tiempo fusionada (app 11: hora no decreciente, cada pedido una vez, orden por
+courier conservado) las prueba `tests/test_delivery_timeline.cpp` sin CUDA.
+
 #### Aplicación 07: histograma de tiempos de entrega por minuto (`delivery_histogram`)
 
 Cuenta cuántas entregas tardaron cada minuto (barras 0..59 y una barra 60 que junta "60 min o más"; la suma

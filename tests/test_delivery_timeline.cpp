@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -68,6 +69,44 @@ void makeLists(std::uint64_t seed, int listCount, int maxPerList, int timeStepMs
         }
         listStart.push_back(static_cast<int>(records.size()));
     }
+}
+
+// Invariantes de la linea de tiempo fusionada. Hay UN solo evento por pedido (su entrega), asi que
+// "los estados de un pedido nunca retroceden" equivale a (a) + (b): (a) la hora de entrega nunca decrece
+// a lo largo del log fusionado y (b) cada pedido aparece exactamente una vez (no se pierde ni se duplica).
+// (c) es la estabilidad: dentro de cada courier se conserva el orden original de su lista.
+bool deliveredAtNeverDecreases(const Records& merged) {
+    for (std::size_t position = 1; position < merged.size(); ++position) {
+        if (merged[position].deliveredAtMs < merged[position - 1].deliveredAtMs) return false;
+    }
+    return true;
+}
+
+bool everyOrderExactlyOnce(const Records& merged) {
+    std::vector<int> orderIds;
+    for (const DeliveryRecord& record : merged) orderIds.push_back(record.orderId);
+    std::sort(orderIds.begin(), orderIds.end());
+    return std::adjacent_find(orderIds.begin(), orderIds.end()) == orderIds.end();
+}
+
+// El orden relativo de los eventos de cada courier en la fusion es el de su lista de entrada.
+bool courierOrderPreserved(const Records& records, const ListStart& listStart, const Records& merged) {
+    std::map<int, std::size_t> positionInMerged;  // orderId -> posicion en la fusion (los pedidos son unicos)
+    for (std::size_t position = 0; position < merged.size(); ++position) positionInMerged[merged[position].orderId] = position;
+    for (std::size_t list = 0; list + 1 < listStart.size(); ++list) {
+        for (int item = listStart[list] + 1; item < listStart[list + 1]; ++item) {
+            const auto previous = positionInMerged.find(records[item - 1].orderId);
+            const auto current = positionInMerged.find(records[item].orderId);
+            if (previous == positionInMerged.end() || current == positionInMerged.end()) return false;
+            if (previous->second >= current->second) return false;  // el orden de la lista se invirtio
+        }
+    }
+    return true;
+}
+
+bool timelineInvariantsHold(const Records& records, const ListStart& listStart, const Records& merged) {
+    return merged.size() == records.size() && deliveredAtNeverDecreases(merged) && everyOrderExactlyOnce(merged) &&
+           courierOrderPreserved(records, listStart, merged);
 }
 
 }  // namespace
@@ -167,6 +206,34 @@ int main() {
                 CHECK(total == static_cast<int>(expected.size()));
             }
         }
+    }
+
+    // Invariantes de la fusion (version 1 hilo y N hilos): hora no decreciente, cada pedido una vez, orden por courier.
+    {
+        for (const int listCount : {1, 3, 100, 1999}) {
+            for (const int timeStepMs : {1000, 1}) {  // paso 1 ms: casi todo empata
+                Records records;
+                ListStart listStart;
+                makeLists(500 + listCount, listCount, 40, timeStepMs, 4, records, listStart);  // orderId unicos por construccion
+                CHECK(everyOrderExactlyOnce(records));  // la entrada cumple el contrato
+                CHECK(timelineInvariantsHold(records, listStart, accel::mergeCourierListsCpu1(records, listStart)));
+                for (const unsigned threads : {1u, 3u, 16u}) {
+                    accel::ThreadPool threadPool(threads);
+                    const Records merged = accel::mergeCourierListsCpuN(records, listStart, threadPool);
+                    CHECK(timelineInvariantsHold(records, listStart, merged));
+                }
+            }
+        }
+        // Empates entre couriers con el mismo ms: el orden dentro de cada courier se conserva.
+        const Records tied{{10, 1}, {10, 2}, {20, 3}, {10, 4}, {20, 5}, {10, 6}, {10, 7}};
+        const ListStart tiedStart{0, 3, 5, 7};
+        CHECK(timelineInvariantsHold(tied, tiedStart, accel::mergeCourierListsCpu1(tied, tiedStart)));
+        // Los verificadores detectan las violaciones (si no, las pruebas de arriba no probarian nada).
+        CHECK(!deliveredAtNeverDecreases(Records{{10, 1}, {5, 2}}));
+        CHECK(!everyOrderExactlyOnce(Records{{10, 1}, {20, 1}}));  // pedido duplicado
+        CHECK(!timelineInvariantsHold(tied, tiedStart, Records{{10, 2}, {10, 1}, {10, 4}, {10, 6}, {10, 7}, {20, 3}, {20, 5}}));  // courier 0 invertido
+        const Records duplicated{{10, 1}, {20, 2}, {15, 2}};  // el pedido 2 esta en dos couriers
+        CHECK(!everyOrderExactlyOnce(accel::mergeCourierListsCpu1(duplicated, ListStart{0, 2, 3})));
     }
 
     // Texto para stderr y resumen completo (el build de pruebas no tiene CUDA: siempre respaldo CPU).
