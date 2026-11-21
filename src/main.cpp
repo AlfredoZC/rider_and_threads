@@ -740,6 +740,8 @@ int main(int argc, char** argv) {
     dispatcherThread.join();
     std::cerr << "[gpu] filtro de candidatos: " << dispatcher.candidateFilter().gpuFilters() << " en GPU, "
               << dispatcher.candidateFilter().cpuFilters() << " en CPU" << std::endl;
+    std::cerr << "[gpu] ETA en lote: " << dispatcher.etaBatch().gpuBatches() << " en GPU, "
+              << dispatcher.etaBatch().cpuBatches() << " en CPU" << std::endl;
 
     for (auto& entry : restaurants) {
         entry.second->stop();

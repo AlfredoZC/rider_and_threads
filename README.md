@@ -408,6 +408,25 @@ tabla de 56 MB):
 ./delivery_sim ../config/ciudad.json --headless --bench r.csv --apps candidate_filter,candidate_filter_naive --reps 2 --force
 ```
 
+### Aplicación 04: ETA en lote pedido × courier (coalescing, AoS contra SoA)
+
+Las cotizaciones de una ronda del `Dispatcher` (los couriers que deja el filtro de la aplicación 10) se calculan como UNA
+fila de una matriz de ETA (`accel::EtaBatch`, `src/accel/EtaBatch.h`): `ETA = max(libreDesde + viajeAlRestaurante, pedidoListo)
++ viajeAlCliente`, con los viajes leídos de la tabla de la aplicación 03 (la misma fórmula que `estimateDeliveryMsWithTable`,
+en `src/accel/EtaFormula.h`; un tiempo sin camino se propaga como "inalcanzable"). Se pide al `GpuWorker` (un hilo por par, el
+courier en el eje x, columnas SoA con lecturas coalescidas) con el plazo común de `quoteTimeoutMs` y, si no hay GPU, falla o
+vence, se calcula en CPU con la misma fórmula. Con una cotización propia (`setQuoteFunction`) o sin tabla publicada se cotiza
+courier por courier como antes. La elección del mejor y `reserve()` no cambian. Al cerrar escribe en stderr
+`[gpu] ETA en lote: X en GPU, Y en CPU`.
+
+Bench: `eta_batch_soa` y `eta_batch_aos` (la misma fórmula con los couriers como arreglos o como registros de 32 bytes de los
+que la ETA usa 8). `size` = couriers; los pedidos salen de 50→10, 150→30, 500→100, 2000→300, 5000→600 (otro tamaño: size/8).
+`describe` informa los bytes útiles y movidos (modelo) y los GB/s efectivos:
+
+```bash
+./delivery_sim ../config/ciudad.json --headless --bench r.csv --apps eta_batch_soa,eta_batch_aos --reps 2 --force
+```
+
 ## 3. Entrada y salida
 
 - **Entrada:** archivo JSON con el formato de la sección 5 del enunciado (`map`, `nodes`, `streets`,

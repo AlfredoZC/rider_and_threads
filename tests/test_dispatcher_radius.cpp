@@ -43,7 +43,7 @@ struct Outcome {
 // Un pedido con 3 couriers en los nodos dados; radiusMs < 0 = no tocar el valor por defecto.
 Outcome runOne(Config& cfg, const CityGraph& graph, const std::vector<std::string>& courierNodes,
                const std::string& pickup, const std::string& dropoff, bool publishTable, std::int64_t radiusMs,
-               std::vector<CourierId>* quotedCouriers) {
+               std::vector<CourierId>* quotedCouriers, bool customQuote = true, std::size_t* etaBatches = nullptr) {
     const SimClock clock(1.0);
     EventLog log("tests/bin/disp_radius.log", clock);
     OrderBook book(50, clock, log);
@@ -66,7 +66,7 @@ Outcome runOne(Config& cfg, const CityGraph& graph, const std::vector<std::strin
     Dispatcher dispatcher(cfg, ctx, fleet);
     if (radiusMs >= 0) dispatcher.setCandidateRadiusMs(radiusMs);
     std::mutex quotedMutex;
-    dispatcher.setQuoteFunction([&](Router& router, const CityGraph& cityGraph, const Courier& courier, const Order& order) {
+    if (customQuote) dispatcher.setQuoteFunction([&](Router& router, const CityGraph& cityGraph, const Courier& courier, const Order& order) {
         {
             std::lock_guard<std::mutex> guard(quotedMutex);
             if (quotedCouriers != nullptr) quotedCouriers->push_back(courier.id);
@@ -87,6 +87,7 @@ Outcome runOne(Config& cfg, const CityGraph& graph, const std::vector<std::strin
     Outcome outcome;
     outcome.assignedCourier = book.find(1)->assignedCourier;
     outcome.quotes = dispatcher.quotesRequested();
+    if (etaBatches != nullptr) *etaBatches = dispatcher.etaBatch().cpuBatches() + dispatcher.etaBatch().gpuBatches();
     return outcome;
 }
 
@@ -181,6 +182,25 @@ int main() {
         const Outcome outcome = runOne(cfg, graph, {farNode, restaurantNode, farNode}, restaurantNode, dropoff, false, 1, nullptr);
         CHECK(outcome.quotes == 3);
         CHECK(outcome.assignedCourier == 2);
+    }
+    // Aplicacion 04: con la cotizacion por defecto y la tabla publicada, las cotizaciones de la ronda son una
+    // fila de ETA en lote (misma eleccion que cotizando courier por courier); sin tabla no se usa el lote.
+    {
+        std::size_t batches = 0;
+        const Outcome batched = runOne(cfg, graph, {farNode, restaurantNode, farNode}, restaurantNode, dropoff, true, 0,
+                                       nullptr, false, &batches);
+        CHECK(batched.quotes == 3 && batched.assignedCourier == 2);
+        CHECK(batches >= 1);
+        std::size_t noBatches = 0;
+        const Outcome perCourier = runOne(cfg, graph, {farNode, restaurantNode, farNode}, restaurantNode, dropoff, false, 0,
+                                          nullptr, false, &noBatches);
+        CHECK(perCourier.quotes == 3 && perCourier.assignedCourier == batched.assignedCourier);
+        CHECK(noBatches == 0);
+        // Con el radio por defecto el lote se calcula solo para los cercanos.
+        std::size_t radiusBatches = 0;
+        const Outcome nearbyOnly = runOne(cfg, graph, {farNode, restaurantNode, farNode}, restaurantNode, dropoff, true, 1,
+                                          nullptr, false, &radiusBatches);
+        CHECK(nearbyOnly.quotes == 1 && nearbyOnly.assignedCourier == 2 && radiusBatches >= 1);
     }
     // Radio por defecto (10 min): el resultado es el mismo que con el filtro apagado.
     {

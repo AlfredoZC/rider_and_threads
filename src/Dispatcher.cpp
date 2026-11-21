@@ -4,6 +4,7 @@
 #include <optional>
 #include <unordered_set>
 
+#include "accel/EtaBatch.h"
 #include "accel/TravelTimeTable.h"
 
 namespace {
@@ -38,7 +39,8 @@ Dispatcher::Dispatcher(const Config& cfg, const SimContext& ctx,
       router_(ctx.graph),
       pool_(ctx.graph, static_cast<unsigned>(cfg.couriers) +
                            static_cast<unsigned>(cfg.reinforcements.max)),
-      filter_(ctx.gpu) {}
+      filter_(ctx.gpu),
+      etaBatch_(ctx.gpu) {}
 
 Dispatcher::Dispatcher(const Config& cfg, const SimContext& ctx, Fleet& fleet)
     : ctx_(ctx),
@@ -50,7 +52,8 @@ Dispatcher::Dispatcher(const Config& cfg, const SimContext& ctx, Fleet& fleet)
       router_(ctx.graph),
       pool_(ctx.graph, static_cast<unsigned>(cfg.couriers) +
                            static_cast<unsigned>(cfg.reinforcements.max)),
-      filter_(ctx.gpu) {}
+      filter_(ctx.gpu),
+      etaBatch_(ctx.gpu) {}
 
 std::vector<CourierActor*> Dispatcher::activeCouriers() const {
     if (fleet_ != nullptr) {
@@ -241,47 +244,53 @@ Dispatcher::DispatchResult Dispatcher::quoteRound(const Order& order, const std:
                                                   std::chrono::steady_clock::time_point deadline) {
     const OrderId orderId = order.id;
 
-    std::vector<Candidate> candidates;
-    for (const FleetMember& member : members) {
-        candidates.push_back(Candidate{
-            member.actor, pool_.submit([this, view = member.view, order](Router& router) {
-                return quote_(router, ctx_.graph, view, order);
-            })});
-    }
-
-    if (candidates.empty()) {
+    if (members.empty()) {
         return DispatchResult::noRoom;
     }
-    {
-        const std::lock_guard<std::mutex> guard(mutex_);
-        requested_ += static_cast<std::int64_t>(candidates.size());
-    }
-
-
     std::vector<std::pair<std::int64_t, CourierActor*>> ranked;
     std::int64_t lateNow = 0;
     bool failed = false;
 
-    for (Candidate& c : candidates) {
-        if (c.estimate.wait_until(deadline) != std::future_status::ready) {
-            inFlight_.push_back(std::move(c.estimate));
-            ++lateNow;
-            continue;
-        }
-        std::int64_t value = kUnreachable;
-        try {
-            value = c.estimate.get();
-        } catch (...) {
-            failed = true;
-            continue;
-        }
-        if (value != kUnreachable) {
-            ranked.emplace_back(value, c.actor);
-        }
-    }
-    if (lateNow > 0) {
+    // Aplicacion 04: con la cotizacion por defecto y la tabla publicada, las cotizaciones de la ronda son UNA
+    // fila de ETA calculada en lote (GPU con respaldo CPU) en vez de una cotizacion por courier. Respeta el
+    // mismo plazo comun de dispatchOne. Con una cotizacion propia (setQuoteFunction) o sin tabla, como siempre.
+    if (batchQuotes(order, members, deadline, ranked)) {
         const std::lock_guard<std::mutex> guard(mutex_);
-        late_ += lateNow;
+        requested_ += static_cast<std::int64_t>(members.size());
+    } else {
+        std::vector<Candidate> candidates;
+        for (const FleetMember& member : members) {
+            candidates.push_back(Candidate{
+                member.actor, pool_.submit([this, view = member.view, order](Router& router) {
+                    return quote_(router, ctx_.graph, view, order);
+                })});
+        }
+        {
+            const std::lock_guard<std::mutex> guard(mutex_);
+            requested_ += static_cast<std::int64_t>(candidates.size());
+        }
+
+        for (Candidate& c : candidates) {
+            if (c.estimate.wait_until(deadline) != std::future_status::ready) {
+                inFlight_.push_back(std::move(c.estimate));
+                ++lateNow;
+                continue;
+            }
+            std::int64_t value = kUnreachable;
+            try {
+                value = c.estimate.get();
+            } catch (...) {
+                failed = true;
+                continue;
+            }
+            if (value != kUnreachable) {
+                ranked.emplace_back(value, c.actor);
+            }
+        }
+        if (lateNow > 0) {
+            const std::lock_guard<std::mutex> guard(mutex_);
+            late_ += lateNow;
+        }
     }
 
     std::sort(ranked.begin(), ranked.end(),
@@ -317,6 +326,54 @@ Dispatcher::DispatchResult Dispatcher::quoteRound(const Order& order, const std:
         return DispatchResult::unquotable;
     }
     return DispatchResult::noRoom;
+}
+
+// Aplicacion 04: rellena `ranked` con la ETA de cada courier de la ronda, calculada como UNA fila de la
+// matriz de ETA (EtaBatch: GPU con plazo comun y respaldo CPU). La formula es la de estimateDeliveryMsWithTable
+// con el courier libre ahora. false = no aplica (cotizacion propia, sin tabla, nodos desconocidos o tiempos de
+// preparacion fuera de rango) y quien llama cotiza courier por courier como siempre.
+bool Dispatcher::batchQuotes(const Order& order, const std::vector<FleetMember>& members,
+                             std::chrono::steady_clock::time_point deadline,
+                             std::vector<std::pair<std::int64_t, CourierActor*>>& ranked) {
+    constexpr std::int64_t kMaxBatchPrepMs = 100'000'000;  // ~27 h: la ETA en 32 bits no se satura
+    const std::shared_ptr<const accel::TravelTimeTable> table =
+        ctx_.travelTimes != nullptr ? ctx_.travelTimes->get() : nullptr;
+    const NodeIndex pickup = ctx_.graph.indexOf(order.pickupNode);
+    const NodeIndex dropoff = ctx_.graph.indexOf(order.dropoffNode);
+    if (!defaultQuote_ || table == nullptr || table->nodeCount() != ctx_.graph.nodeCount() || pickup == kNoNode ||
+        dropoff == kNoNode || order.prepMs < 0 || order.prepMs > kMaxBatchPrepMs) {
+        return false;
+    }
+    accel::CourierColumns couriers;
+    std::vector<CourierActor*> actors;  // los que tienen nodo conocido (los otros eran kUnreachable)
+    for (const FleetMember& member : members) {
+        const NodeIndex node = ctx_.graph.indexOf(currentNode(member.view));
+        if (node == kNoNode || node >= table->nodeCount()) {
+            continue;
+        }
+        couriers.node.push_back(static_cast<std::int32_t>(node));
+        couriers.freeAtMs.push_back(0);  // como la cotizacion de siempre: el courier cuenta desde ahora
+        actors.push_back(member.actor);
+    }
+    accel::OrderColumns orders;
+    orders.restaurantNode = {static_cast<std::int32_t>(pickup)};
+    orders.customerNode = {static_cast<std::int32_t>(dropoff)};
+    orders.readyAtMs = {static_cast<std::int32_t>(order.prepMs)};
+    if (actors.empty()) {
+        return true;
+    }
+    std::vector<std::int32_t> eta;
+    try {
+        eta = etaBatch_.compute(table, std::move(couriers), std::move(orders), remainingMs(deadline));
+    } catch (const std::exception&) {
+        return false;  // la ETA en lote es una optimizacion: ante un fallo se cotiza courier por courier
+    }
+    for (std::size_t column = 0; column < actors.size(); ++column) {
+        if (eta[column] < accel::kUnreachableMs) {
+            ranked.emplace_back(eta[column], actors[column]);
+        }
+    }
+    return true;
 }
 
 void Dispatcher::sweepLateQuotes() {

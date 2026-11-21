@@ -14,6 +14,7 @@
 #include "CourierActor.h"
 #include "Fleet.h"
 #include "accel/CandidateFilter.h"
+#include "accel/EtaBatch.h"
 #include "Quote.h"
 #include "QuotePool.h"
 #include "SimContext.h"
@@ -33,7 +34,10 @@ public:
     void run();
     void requestStop();
 
-    void setQuoteFunction(QuoteFn fn) { quote_ = std::move(fn); }
+    void setQuoteFunction(QuoteFn fn) {
+        quote_ = std::move(fn);
+        defaultQuote_ = false;  // con una cotizacion propia no se usa la ETA en lote
+    }
 
     // Radio del filtro de candidatos (aplicacion 10): antes de cotizar un pedido se cotiza primero a los
     // couriers que llegan al restaurante en a lo sumo este tiempo segun la tabla de tiempos; 0 lo apaga.
@@ -43,6 +47,7 @@ public:
     void setCandidateRadiusMs(std::int64_t radiusMs) { candidateRadiusMs_ = radiusMs; }
     std::int64_t candidateRadiusMs() const { return candidateRadiusMs_; }
     const accel::CandidateFilter& candidateFilter() const { return filter_; }
+    const accel::EtaBatch& etaBatch() const { return etaBatch_; }
 
     std::int64_t quotesRequested() const;
     std::size_t quoteWorkers() const { return pool_.workers(); }
@@ -62,6 +67,9 @@ private:
     DispatchResult dispatchOne(const Order& order);
     DispatchResult quoteRound(const Order& order, const std::vector<FleetMember>& members,
                              std::chrono::steady_clock::time_point deadline);
+    bool batchQuotes(const Order& order, const std::vector<FleetMember>& members,
+                     std::chrono::steady_clock::time_point deadline,
+                     std::vector<std::pair<std::int64_t, CourierActor*>>& ranked);
     void splitByRadius(const Order& order, const std::vector<FleetMember>& available,
                        std::vector<FleetMember>& nearby, std::vector<FleetMember>& others,
                        std::chrono::steady_clock::time_point deadline);
@@ -92,4 +100,6 @@ private:
     std::int64_t late_ = 0;
     std::int64_t candidateRadiusMs_ = kDefaultCandidateRadiusMs;
     accel::CandidateFilter filter_;
+    accel::EtaBatch etaBatch_;
+    bool defaultQuote_ = true;
 };
