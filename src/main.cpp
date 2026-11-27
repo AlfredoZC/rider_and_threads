@@ -36,6 +36,7 @@
 #include "SimContext.h"
 #include "accel/Backend.h"
 #include "accel/GpuInfo.h"
+#include "accel/TravelTimeTable.h"
 #include "bench/BenchCli.h"
 #include "bench/BenchMain.h"
 
@@ -454,7 +455,13 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    const SimContext ctx{graph, clock, *log, book, restaurants, backend.worker.get()};
+    // Tabla de tiempos entre todos los pares: UNA vez, antes de lanzar los hilos de la simulacion (queda
+    // inmutable en el contexto, sin publicacion concurrente). La linea va a stderr: stdout lo lee validate_log.py.
+    const accel::TravelTimeBuild travelTimes = accel::buildTravelTimeTable(
+        graph, backend.worker.get(), std::thread::hardware_concurrency());
+    std::cerr << travelTimes.line << std::endl;
+
+    const SimContext ctx{graph, clock, *log, book, restaurants, backend.worker.get(), travelTimes.table};
 
     Fleet fleet(cfg, ctx);
     for (int i = 0; i < cfg.couriers; ++i) {

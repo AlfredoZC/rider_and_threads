@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "OrderFactory.h"
+#include "accel/TravelTimeTable.h"
 
 namespace {
 
@@ -39,6 +40,43 @@ bool waitUntil(Fn condition, std::int64_t limitMs) {
     return condition();
 }
 
+
+// Corre un pedido con 3 couriers (1 lejos, 2 en el restaurante, 3 en el inicio) y devuelve a quien se lo asigno
+// el dispatcher con el SimContext que lleva `table` (nullptr = sin tabla).
+CourierId assignedCourierWith(const Config& cfg, const CityGraph& graph,
+                              const std::shared_ptr<const accel::TravelTimeTable>& table,
+                              const std::string& logPath) {
+    const SimClock clock(1.0);
+    EventLog log(logPath, clock);
+    OrderBook book(50, clock, log);
+    Restaurants restaurants;
+    for (const RestaurantConfig& r : cfg.restaurants) {
+        restaurants.emplace(r.id, std::make_unique<Restaurant>(r.id, r.pickupSlots));
+    }
+    const SimContext ctx{graph, clock, log, book, restaurants, nullptr, table};
+
+    std::vector<std::unique_ptr<CourierActor>> fleet;
+    fleet.push_back(std::make_unique<CourierActor>(1, cfg.nodes.back().id, 3, ctx));
+    fleet.push_back(std::make_unique<CourierActor>(2, cfg.restaurants.front().node, 3, ctx));
+    fleet.push_back(std::make_unique<CourierActor>(3, cfg.startNode, 3, ctx));
+
+    Dispatcher dispatcher(cfg, ctx, fleet);
+    assert(book.admit(makeOrder(1, cfg.restaurants.front().node, cfg.nodes.back().id)));
+    std::thread worker(&Dispatcher::run, &dispatcher);
+    assert(waitUntil([&] { return book.find(1)->state == OrderState::assigned; }, 3000));
+    dispatcher.requestStop();
+    worker.join();
+    return book.find(1)->assignedCourier;
+}
+
+// Tabla "trucada" de `nodeCount` nodos: todo cuesta 1.000.000 ms salvo la celda (fromNode, toNode) que cuesta 1 ms.
+// No se parece a los tiempos reales del Router a proposito: asi se sabe de donde salio una estimacion.
+std::shared_ptr<const accel::TravelTimeTable> riggedTable(std::size_t nodeCount, std::size_t fromNode,
+                                                          std::size_t toNode) {
+    std::vector<std::int32_t> cells(nodeCount * nodeCount, 1000000);
+    cells[fromNode * nodeCount + toNode] = 1;
+    return std::make_shared<const accel::TravelTimeTable>(nodeCount, std::move(cells));
+}
 }
 
 int main() {
@@ -298,6 +336,32 @@ int main() {
         assert(book.find(3)->state != OrderState::rejected);
         std::cout << "  un destino inalcanzable se rechaza con unreachable, y uno"
                      " alcanzable no\n";
+    }
+
+    {
+        // El dispatcher estima con la tabla cuando el SimContext la lleva y es de este grafo; si no, con el Router.
+        // Con el Router gana el courier 2 (esta en el restaurante). La tabla trucada solo hace barato ir del nodo del
+        // courier 1 al restaurante: si el ganador es el 1, la estimacion salio de la tabla.
+        // Config propia: los bloques anteriores dejaron cfg con plazos de prueba (acceptTimeoutMs = 0 rechaza todo).
+        Config freshCfg = loadConfig("config/equipetrol.json");
+        freshCfg.quoteTimeoutMs = 5000;
+        const std::size_t courierOneNode = graph.indexOf(cfg.nodes.back().id);
+        const std::size_t pickupNode = graph.indexOf(restaurantNode);
+        assert(courierOneNode != pickupNode);
+
+        const CourierId withRouter = assignedCourierWith(freshCfg, graph, nullptr, "tests/bin/disp_no_table.log");
+        assert(withRouter == 2);
+
+        const CourierId withTable = assignedCourierWith(
+            freshCfg, graph, riggedTable(graph.nodeCount(), courierOneNode, pickupNode), "tests/bin/disp_table.log");
+        assert(withTable == 1);
+
+        // Tabla de OTRO tamano: no es de este grafo, se ignora y se estima con el Router.
+        const CourierId withForeignTable = assignedCourierWith(
+            freshCfg, graph, riggedTable(graph.nodeCount() - 1, 0, 1), "tests/bin/disp_foreign.log");
+        assert(withForeignTable == 2);
+        std::cout << "  con tabla del grafo estima con la tabla (courier " << withTable
+                  << "); sin tabla o con una de otro tamano, con el Router (courier " << withRouter << ")\n";
     }
 
     std::cout << "  dispatcher ok\n";

@@ -198,7 +198,7 @@ bash ../tools/check_bench.sh ./delivery_sim      # verifica CSV, .env.json, rota
 | Argumento | Significado |
 |-----------|-------------|
 | `--bench <results.csv>` | Modo medición; no sobrescribe un CSV existente sin `--force` |
-| `--apps a,b` | Aplicaciones a medir (por defecto todas las registradas: `calib_copy`, `calib_launch`) |
+| `--apps a,b` | Aplicaciones a medir (por defecto todas las registradas: `calib_copy`, `calib_launch`, `apsp_floyd`, `apsp_floyd_naive`, `apsp_dijkstra`) |
 | `--reps N` | Repeticiones medidas, 1 a 100000 (por defecto 10; el enunciado pide al menos 10 para el informe) |
 | `--threads 1,2,4` | Barrido de `cpuN`; por defecto 1,2,4,6,8,12,16 recortado a `hardware_concurrency` |
 | `--sizes s1,s2` | Reemplaza los tamaños de cada aplicación (para pruebas rápidas) |
@@ -245,6 +245,36 @@ Para agregar una aplicación: un archivo en `src/bench/` con una clase que hered
 `BENCH_REGISTER_APP("nombre", Clase);`. `src/bench/CitySubgraph.h` ofrece `extractRegion(config, nodo, n)`,
 un subgrafo conexo de la ciudad real con exactamente `n` nodos (BFS determinista desde un nodo de Equipetrol,
 con las calles y sus sentidos) para los tamaños de grafo.
+
+### Tabla de tiempos entre todos los pares (concepto 03: tiling y memoria compartida)
+
+**Qué hace.** Al arrancar se calcula UNA vez la tabla `travelTimeMs[desde][hasta]` con el tiempo mínimo entre
+todas las intersecciones (`n × n` celdas de `int32`: 56 MB con las 3.741 de la ciudad; `-1` = sin camino; las
+calles de un sentido se respetan). Con GPU se calcula con Floyd–Warshall por bloques (tiles de 32 × 32 en
+memoria compartida, 3 fases por tile pivote: pivote, fila y columna, resto); sin GPU, o si falla, con Dijkstra
+desde cada nodo en paralelo (la mejor CPU). `src/main.cpp` la arma antes de lanzar los hilos de la simulación,
+escribe en `stderr` una línea con quién la calculó y cuánto tardó, y la deja inmutable en `SimContext::travelTimes`.
+Con más de 8.192 nodos (256 MiB) no se arma y todo sigue con el Router.
+
+**Dónde se usa.** Solo en las estimaciones: `estimateDeliveryMs(table, ...)` (llamada por el `Dispatcher`) lee
+dos celdas en vez de correr dos Dijkstra por candidato y da exactamente los mismos ms, incluido `kUnreachable`
+cuando no hay camino. El camino que recorre el courier sigue saliendo del `Router`.
+
+**Plazos.** `quoteTimeoutMs` sigue siendo el plazo de cada cotización, pero con la tabla una estimación son dos
+lecturas de memoria en la CPU y no pasa por la GPU: no hay cómputo de GPU por estimación que pueda vencer. La
+GPU interviene una sola vez, al arrancar: la tabla se calcula en el hilo dueño de la GPU con un plazo REAL de
+60 s (`kStartupGpuTimeoutMs`, en `src/accel/TravelTimeTable.h`). Si vence o la GPU falla (sin memoria, error
+CUDA, hilo no sano), el respaldo es Dijkstra desde cada nodo en N hilos de CPU y la tarea de la GPU se descarta.
+
+**Bench** (tres aplicaciones; `size` = nodos del subgrafo de la ciudad: 25, 100, 400, 1000, 2000, 3741; sin
+ciudad, un grafo sintético): `apsp_floyd` (`cpu1`, `cpuN`, `gpu_kernel`, `gpu_e2e` con tiles),
+`apsp_floyd_naive` (GPU sin tiles, el "antes"; sus `cpu1`/`cpuN` son Dijkstra) y `apsp_dijkstra` (`cpu1`,
+`cpuN`). Cada corrida se compara celda por celda con la tabla de Dijkstra desde cada nodo.
+
+```bash
+./delivery_sim ../config/ciudad.json --headless --bench r.csv --apps apsp_floyd,apsp_floyd_naive,apsp_dijkstra --sizes 100,1000 --reps 2 --force
+./delivery_sim ../config/ciudad.json --headless --bench-once --app apsp_floyd --size 3741
+```
 
 ## 3. Entrada y salida
 
