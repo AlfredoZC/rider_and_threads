@@ -3,14 +3,18 @@
 #include <cstring>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <csignal>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+#include <pthread.h>
 
 #include <opencv2/core.hpp>
 #include <opencv2/highgui.hpp>
@@ -30,6 +34,11 @@
 #include "Summary.h"
 #include "CityGraph.h"
 #include "SimContext.h"
+#include "accel/Backend.h"
+#include "accel/GpuInfo.h"
+#include "accel/TravelTimeTable.h"
+#include "bench/BenchCli.h"
+#include "bench/BenchMain.h"
 
 namespace {
 
@@ -43,12 +52,18 @@ struct Arguments {
     std::string configPath;
     std::string logPath = "events.log";
     bool noWindow = false;
+    bool headless = false;
+    accel::BackendChoice backend = accel::BackendChoice::automatic;
 };
 
 bool parseArguments(int argc, char** argv, Arguments& args) {
     if (argc < 2) {
         std::cerr << "Uso: " << argv[0]
-                  << " <config.json> [--log <path>] [--no-window]\n";
+                  << " <config.json> [--log <path>] [--no-window | --headless]\n"
+                  << "       [--backend cpu|gpu|auto]\n"
+                  << "  --no-window  sin ventana, pero carga la imagen y dibuja cada cuadro\n"
+                  << "  --headless   sin imagen, sin dibujo ni highgui; espera bloqueado\n"
+                  << "  --backend    cpu | gpu | auto (por defecto): auto usa la GPU si esta lista\n";
         return false;
     }
     args.configPath = argv[1];
@@ -56,6 +71,18 @@ bool parseArguments(int argc, char** argv, Arguments& args) {
         const std::string flag = argv[i];
         if (flag == "--no-window") {
             args.noWindow = true;
+        } else if (flag == "--headless") {
+            args.headless = true;
+        } else if (flag == "--backend" && i + 1 < argc) {
+            bool ok = false;
+            args.backend = accel::parseBackendChoice(argv[++i], ok);
+            if (!ok) {
+                std::cerr << "Error: --backend admite cpu, gpu o auto\n";
+                return false;
+            }
+        } else if (flag == "--backend") {
+            std::cerr << "Error: --backend necesita cpu, gpu o auto\n";
+            return false;
         } else if (flag == "--log" && i + 1 < argc) {
             args.logPath = argv[++i];
         } else if (flag == "--log") {
@@ -235,16 +262,119 @@ void drawPanel(cv::Mat& img, const OrderStats& stats, std::int64_t nowMs,
     drawLabel(img, drawableText(attribution), cv::Point(x, img.rows - 10), 0.45);
 }
 
+// Modo --headless: el hilo principal espera el fin de la simulacion BLOQUEADO, sin sondeo.
+// SIGINT/SIGTERM se bloquean en todos los hilos (la mascara se hereda, asi que debe fijarse
+// antes de crear el primero) y un hilo dedicado las recibe con sigwait, que corre en contexto
+// normal (no en un manejador): ahi si se puede tomar un mutex y notificar la condition_variable.
+// Una senal que llegue antes de crear ese hilo queda pendiente y sigwait la recoge.
+class HeadlessStop {
+public:
+    // false si el sistema no pudo bloquearlas: sin bloqueo sigwait no es fiable.
+    static bool blockSignals() {
+        const sigset_t set = stopSet();
+        return pthread_sigmask(SIG_BLOCK, &set, nullptr) == 0;
+    }
+
+    HeadlessStop() = default;
+    HeadlessStop(const HeadlessStop&) = delete;
+    HeadlessStop& operator=(const HeadlessStop&) = delete;
+
+    // Si algo lanza entre start() y finish(), evita std::terminate por un hilo unible.
+    ~HeadlessStop() {
+        if (waiter_.joinable()) {
+            finish();
+        }
+    }
+
+    void start() { waiter_ = std::thread(&HeadlessStop::waitForSignal, this); }
+
+    // Bloquea hasta una senal o hasta que el reloj simulado llegue a durationMs (0 = sin limite).
+    void waitUntil(const SimClock& clock, std::int64_t durationMs) {
+        // Una senal que llego entre std::signal y blockSignals ejecuto onStopSignal en este
+        // mismo hilo (el unico que existia) y dejo la bandera: ya cuenta como parada recibida.
+        if (g_stopSignal.load()) {
+            return;
+        }
+        std::unique_lock<std::mutex> lock(mutex_);
+        while (!signaled_) {
+            if (durationMs <= 0) {
+                cv_.wait(lock, [this] { return signaled_; });
+            } else if (clock.nowMs() >= durationMs) {
+                return;
+            } else {
+                cv_.wait_until(lock, clock.timePointAt(durationMs), [this] { return signaled_; });
+            }
+        }
+    }
+
+    // Libera al hilo de senales (si no se fue ya) y lo une.
+    void finish() {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (!waiterDone_) {
+                pthread_kill(waiter_.native_handle(), SIGTERM);
+            }
+        }
+        waiter_.join();
+    }
+
+private:
+    static sigset_t stopSet() {
+        sigset_t set;
+        sigemptyset(&set);
+        sigaddset(&set, SIGINT);
+        sigaddset(&set, SIGTERM);
+        return set;
+    }
+
+    void waitForSignal() {
+        const sigset_t set = stopSet();
+        int received = 0;
+        // Si sigwait falla se trata como parada: es el lado seguro (la simulacion cierra limpia).
+        (void)sigwait(&set, &received);
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            waiterDone_ = true;
+            signaled_ = true;
+        }
+        cv_.notify_all();
+    }
+
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    bool signaled_ = false;
+    bool waiterDone_ = false;
+    std::thread waiter_;
+};
+
 }
 
 int main(int argc, char** argv) {
+    // Modo bench (--bench / --bench-once): no corre la simulacion ni abre ventana; ver src/bench/.
+    if (argc >= 2) {
+        const std::vector<std::string> benchArgs(argv + 1, argv + argc);
+        if (bench::isBenchInvocation(benchArgs)) {
+            return bench::runBenchMode(benchArgs);
+        }
+    }
+
     Arguments args;
     if (!parseArguments(argc, argv, args)) {
         return 2;
     }
 
+    // Disposicion explicita en ambos modos: con un SIG_IGN heredado (p. ej. bash con '&') una
+    // senal bloqueada queda pendiente en Linux, pero POSIX no lo especifica; por eso no se
+    // depende de ello. Orden: handler primero y bloqueo despues. Una senal anterior al bloqueo
+    // corre el handler en el hilo principal (unico hilo) y deja g_stopSignal, que waitUntil
+    // revisa; una posterior queda pendiente y sigwait la recoge. No hay orden que la pierda.
     std::signal(SIGINT, onStopSignal);
     std::signal(SIGTERM, onStopSignal);
+    HeadlessStop headlessStop;
+    if (args.headless && !HeadlessStop::blockSignals()) {
+        std::cerr << "Error: no se pudo bloquear SIGINT/SIGTERM para --headless\n";
+        return 1;
+    }
 
     Config cfg;
     try {
@@ -266,25 +396,30 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    cv::Mat image = cv::imread(cfg.imagePath.string(), cv::IMREAD_COLOR);
-    if (image.empty()) {
-        std::cerr << "Error: no se pudo leer la imagen del mapa '" << cfg.imagePath.string() << "'\n";
-        return 1;
-    }
+    cv::Mat image;
+    cv::Mat withGraph;
+    PixelMap px;
+    if (!args.headless) {
+        image = cv::imread(cfg.imagePath.string(), cv::IMREAD_COLOR);
+        if (image.empty()) {
+            std::cerr << "Error: no se pudo leer la imagen del mapa '" << cfg.imagePath.string() << "'\n";
+            return 1;
+        }
 
-    const double kMaxWidth = 1400.0;
-    const double kMaxHeight = 950.0;
-    const double scale = std::min({1.0, kMaxWidth / image.cols, kMaxHeight / image.rows});
-    if (scale < 1.0) {
-        cv::resize(image, image, cv::Size(), scale, scale, cv::INTER_AREA);
-    }
+        const double kMaxWidth = 1400.0;
+        const double kMaxHeight = 950.0;
+        const double scale = std::min({1.0, kMaxWidth / image.cols, kMaxHeight / image.rows});
+        if (scale < 1.0) {
+            cv::resize(image, image, cv::Size(), scale, scale, cv::INTER_AREA);
+        }
 
-    const PixelMap px = buildPixelMap(cfg, image.size());
+        px = buildPixelMap(cfg, image.size());
 
-    cv::Mat withGraph = image.clone();
-    drawGraph(withGraph, cfg, px);
-    for (cv::Mat* background : {&image, &withGraph}) {
-        drawRestaurants(*background, cfg, px);
+        withGraph = image.clone();
+        drawGraph(withGraph, cfg, px);
+        for (cv::Mat* background : {&image, &withGraph}) {
+            drawRestaurants(*background, cfg, px);
+        }
     }
 
     const std::string windowName = "Equipetrol Delivery";
@@ -312,7 +447,21 @@ int main(int argc, char** argv) {
     }
     KitchenScheduler kitchen(restaurantsInOrder, clock, *log);
 
-    const SimContext ctx{graph, clock, *log, book, restaurants};
+    // Backend GPU: despues de los errores de arranque posibles, antes del primer hilo de la
+    // simulacion. El hilo dueño de la GPU se apaga mas abajo, DESPUES de los hilos que lo usan.
+    accel::BackendSelection backend = accel::selectBackend(args.backend);
+    std::cerr << backend.line << std::endl;
+    if (backend.failed) {
+        return 1;
+    }
+
+    // Tabla de tiempos entre todos los pares: UNA vez, antes de lanzar los hilos de la simulacion (queda
+    // inmutable en el contexto, sin publicacion concurrente). La linea va a stderr: stdout lo lee validate_log.py.
+    const accel::TravelTimeBuild travelTimes = accel::buildTravelTimeTable(
+        graph, backend.worker.get(), std::thread::hardware_concurrency());
+    std::cerr << travelTimes.line << std::endl;
+
+    const SimContext ctx{graph, clock, *log, book, restaurants, backend.worker.get(), travelTimes.table};
 
     Fleet fleet(cfg, ctx);
     for (int i = 0; i < cfg.couriers; ++i) {
@@ -328,18 +477,23 @@ int main(int argc, char** argv) {
 
     std::thread generatorThread(&OrderGenerator::run, &generator);
 
-    if (!args.noWindow) {
+    if (!args.noWindow && !args.headless) {
         cv::namedWindow(windowName, cv::WINDOW_AUTOSIZE);
     }
     kitchen.start();
     std::cout << "Simulation has started..." << std::endl;
 
-    const std::int64_t durationMs = cfg.durationS * 1000;
+    const std::int64_t durationMs = secondsToMsSaturated(cfg.durationS);
 
     cv::Mat frame;
     std::vector<Courier> views;
     views.reserve(static_cast<std::size_t>(cfg.couriers));
-    while (true) {
+    if (args.headless) {
+        headlessStop.start();
+        headlessStop.waitUntil(clock, durationMs);
+        headlessStop.finish();
+    }
+    while (!args.headless) {
         (showGraph ? withGraph : image).copyTo(frame);
 
         const std::int64_t nowMs = clock.nowMs();
@@ -395,6 +549,11 @@ int main(int argc, char** argv) {
     fleet.requestStopAll();
     fleet.joinAll();
 
+    // Ya no queda ningun hilo que envie trabajo a la GPU: se apaga (resuelve lo pendiente y une).
+    if (backend.worker) {
+        backend.worker->stop();
+    }
+
     book.markRemainingAsPending();
     const OrderStats stats = book.stats();
     std::int64_t pausesTotal = 0;
@@ -409,7 +568,7 @@ int main(int argc, char** argv) {
                               fleet.reinforcementsRetired(), pausesTotal,
                               delayedTotal) << std::endl;
 
-    if (!args.noWindow) {
+    if (!args.noWindow && !args.headless) {
         cv::destroyAllWindows();
     }
     return 0;

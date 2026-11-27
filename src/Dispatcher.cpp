@@ -8,6 +8,20 @@ namespace {
 // Piso del plazo de reintento: con quoteTimeoutMs = 0 no se debe girar sin dormir.
 constexpr std::int64_t kMinRetryMs = 50;
 constexpr std::int64_t kMaxWaitMs = 24LL * 3600 * 1000;  // evita now()+ms desbordado
+
+// Estimacion por defecto: con tabla de tiempos (dos lecturas) si el contexto la tiene y es de este grafo; si
+// no, con el Router (dos Dijkstra), como siempre. Los dos dan los mismos ms.
+Dispatcher::QuoteFn makeDefaultQuote(const SimContext& ctx) {
+    const std::shared_ptr<const accel::TravelTimeTable> table = ctx.travelTimes;
+    if (table == nullptr || table->nodeCount() != ctx.graph.nodeCount()) {
+        return [](Router& router, const CityGraph& graph, const Courier& courier, const Order& order) {
+            return estimateDeliveryMs(router, graph, courier, order);
+        };
+    }
+    return [table](Router&, const CityGraph& graph, const Courier& courier, const Order& order) {
+        return estimateDeliveryMs(*table, graph, courier, order);
+    };
+}
 }  // namespace
 
 Dispatcher::Dispatcher(const Config& cfg, const SimContext& ctx,
@@ -17,7 +31,7 @@ Dispatcher::Dispatcher(const Config& cfg, const SimContext& ctx,
       quoteTimeoutMs_(cfg.quoteTimeoutMs),
       acceptTimeoutMs_(cfg.acceptTimeoutMs),
       agingMs_(cfg.agingMs),
-      quote_(estimateDeliveryMs),
+      quote_(makeDefaultQuote(ctx)),
       router_(ctx.graph),
       pool_(ctx.graph, static_cast<unsigned>(cfg.couriers) +
                            static_cast<unsigned>(cfg.reinforcements.max)) {}
@@ -28,7 +42,7 @@ Dispatcher::Dispatcher(const Config& cfg, const SimContext& ctx, Fleet& fleet)
       quoteTimeoutMs_(cfg.quoteTimeoutMs),
       acceptTimeoutMs_(cfg.acceptTimeoutMs),
       agingMs_(cfg.agingMs),
-      quote_(estimateDeliveryMs),
+      quote_(makeDefaultQuote(ctx)),
       router_(ctx.graph),
       pool_(ctx.graph, static_cast<unsigned>(cfg.couriers) +
                            static_cast<unsigned>(cfg.reinforcements.max)) {}

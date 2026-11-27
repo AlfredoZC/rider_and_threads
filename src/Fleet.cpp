@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <future>
 #include <stdexcept>
+#include <system_error>
 #include <utility>
 
 Fleet::Fleet(const Config& cfg, const SimContext& ctx)
@@ -105,6 +106,14 @@ bool Fleet::maybeSpawn(std::size_t waiting) {
                 raw->run();
             }
         });
+    } catch (const std::system_error&) {
+        // El sistema no deja crear mas hilos (EAGAIN: tope de hilos o procesos compartido con
+        // otros programas). Un refuerzo es opcional: se sigue sin el. Dejar escapar la excepcion
+        // termina el hilo del despachador con std::terminate, y con miles de hilos vivos el
+        // volcado del abort mantiene el proceso colgado minutos sin poder cerrar. El despachador
+        // vuelve a pedir refuerzos en su siguiente ronda.
+        entries_.pop_back();
+        return false;
     } catch (...) {
         entries_.pop_back();
         throw;

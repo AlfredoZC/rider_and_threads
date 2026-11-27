@@ -1,6 +1,7 @@
 #include "SimClock.h"
 
 #include <cassert>
+#include <cstdint>
 #include <chrono>
 #include <iostream>
 #include <thread>
@@ -89,6 +90,21 @@ int main() {
         for (std::thread& th : threads) { th.join(); }
         for (int v : ok) { assert(v == 1); }
         std::cout << "  4 hilos leyendo el reloj a la vez: monotono en todos\n";
+    }
+
+    {
+        // durationS * 1000 saturado: 0 y 1 exactos, valor gigante sin desbordar (UB) ni
+        // volverse negativo o 0 ("sin limite").
+        assert(secondsToMsSaturated(0) == 0);
+        assert(secondsToMsSaturated(1) == 1000);
+        assert(secondsToMsSaturated(86400) == 86400000);
+        assert(secondsToMsSaturated(INT64_MAX / 1000) == (INT64_MAX / 1000) * 1000);
+        assert(secondsToMsSaturated(INT64_MAX / 1000 + 1) == INT64_MAX);
+        assert(secondsToMsSaturated(18446744073709552LL) == INT64_MAX);
+        assert(secondsToMsSaturated(INT64_MAX) == INT64_MAX);
+        assert(secondsToMsSaturated(-1) == -1000);
+        assert(secondsToMsSaturated(INT64_MIN) == INT64_MIN);
+        std::cout << "  segundos a ms saturado: 0, 1, limite y gigantes\n";
     }
 
     std::cout << "  sim clock ok\n";

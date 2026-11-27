@@ -1,25 +1,15 @@
 #include "Router.h"
 
 #include <algorithm>
-#include <limits>
 #include <queue>
 #include <utility>
 
-namespace {
-constexpr std::int64_t kInfinity = std::numeric_limits<std::int64_t>::max();
-}
-
 Router::Router(const CityGraph &graph)
-    : graph_(graph), dist_(graph.nodeCount(), kInfinity),
+    : graph_(graph), dist_(graph.nodeCount(), kInfinityMs),
       prev_(graph.nodeCount(), kNoNode) {}
 
-Route Router::shortestPath(NodeIndex from, NodeIndex to) {
-  Route route;
-  if (from >= graph_.nodeCount() || to >= graph_.nodeCount()) {
-    return route;
-  }
-
-  std::fill(dist_.begin(), dist_.end(), kInfinity);
+void Router::runDijkstra(NodeIndex from, NodeIndex stopAt) {
+  std::fill(dist_.begin(), dist_.end(), kInfinityMs);
   std::fill(prev_.begin(), prev_.end(), kNoNode);
 
   using Entry = std::pair<std::int64_t, NodeIndex>;
@@ -37,7 +27,7 @@ Route Router::shortestPath(NodeIndex from, NodeIndex to) {
     if (d > dist_[u]) {
       continue;
     }
-    if (u == to) {
+    if (u == stopAt) {
       break;
     }
 
@@ -50,8 +40,17 @@ Route Router::shortestPath(NodeIndex from, NodeIndex to) {
       }
     }
   }
+}
 
-  if (dist_[to] == kInfinity) {
+Route Router::shortestPath(NodeIndex from, NodeIndex to) {
+  Route route;
+  if (from >= graph_.nodeCount() || to >= graph_.nodeCount()) {
+    return route;
+  }
+
+  runDijkstra(from, to);
+
+  if (dist_[to] == kInfinityMs) {
     return route;
   }
 
@@ -65,4 +64,13 @@ Route Router::shortestPath(NodeIndex from, NodeIndex to) {
   }
   std::reverse(route.nodes.begin(), route.nodes.end());
   return route;
+}
+
+const std::vector<std::int64_t> &Router::travelTimesFrom(NodeIndex from) {
+  if (from >= graph_.nodeCount()) {
+    static const std::vector<std::int64_t> kEmpty;
+    return kEmpty;
+  }
+  runDijkstra(from, kNoNode);
+  return dist_;
 }

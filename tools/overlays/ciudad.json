@@ -1,0 +1,37 @@
+{
+  "fleet": {
+    "couriers": 2000,
+    "bagCapacity": 3,
+    "speedKmh": 30,
+    "breakAfterDeliveries": 2,
+    "breakMs": 600000
+  },
+  "orders": {
+    "meanIntervalMs": 2000,
+    "burstMax": 30,
+    "maxPending": 600,
+    "seed": 42,
+    "urgentProbability": 0.3,
+    "agingMs": 300000
+  },
+  "dispatch": {
+    "quoteTimeoutMs": 200,
+    "acceptTimeoutMs": 600000
+  },
+  "incidents": {
+    "breakdownProbability": 0.02
+  },
+  "simulation": {
+    "durationS": 3600,
+    "timeScale": 60
+  },
+  "reinforcements": {
+    "max": 100,
+    "threshold": 6,
+    "idleMs": 300000
+  },
+  "kitchen": {
+    "pauseEveryMs": 900000,
+    "pauseMs": 240000
+  }
+}

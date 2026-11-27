@@ -1,0 +1,6 @@
+// Generado por CMake (configure_file) con los datos del build. No se edita ni se versiona.
+#pragma once
+#define BENCH_BUILD_TYPE "@BENCH_BUILD_TYPE@"
+#define BENCH_SANITIZER "@BENCH_SANITIZER@"
+#define BENCH_CXX_FLAGS "@BENCH_CXX_FLAGS@"
+#define BENCH_CUDA_FLAGS "@BENCH_CUDA_FLAGS@"
